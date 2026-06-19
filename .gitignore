@@ -1,0 +1,16 @@
+# Binaries
+*.exe
+*.dll
+/bin/
+
+# Go
+/vendor/
+*.test
+*.out
+
+# OS
+.DS_Store
+Thumbs.db
+
+# local build artifact
+/fleet

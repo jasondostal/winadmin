@@ -1,0 +1,7 @@
+{
+  "runas": {
+    "provider": "credman",
+    "domain": "ACME",
+    "target": "winadmin/install-account"
+  }
+}

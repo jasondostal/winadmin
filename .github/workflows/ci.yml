@@ -1,0 +1,62 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: gofmt
+        run: test -z "$(gofmt -l .)" || (gofmt -l . && echo 'run gofmt -w .' && exit 1)
+      - name: vet
+        run: go vet ./...
+      - name: test
+        run: go test ./...
+      - name: cross-vet (windows)
+        run: GOOS=windows GOARCH=amd64 go vet ./...
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  # Actually EXECUTE the Windows-tagged code (reg/runas/groups/winrm) on a real
+  # Windows runner — closes the "compile-verified but not run" gap.
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: test (windows)
+        run: go test ./...
+      - name: build fleet (windows)
+        run: go build ./cmd/fleet
+
+  # Make sure the binary compiles for every target we ship.
+  cross-build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target:
+          - { goos: windows, goarch: amd64 }
+          - { goos: linux,   goarch: amd64 }
+          - { goos: darwin,  goarch: arm64 }
+          - { goos: darwin,  goarch: amd64 }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.26'
+      - name: build
+        env:
+          GOOS: ${{ matrix.target.goos }}
+          GOARCH: ${{ matrix.target.goarch }}
+        run: go build ./...
