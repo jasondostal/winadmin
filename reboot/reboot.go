@@ -1,9 +1,9 @@
-// Package reboot covers two Windows admin needs the WinBatch include hit with
-// IntControl(30,...) and a scatter of registry probes:
+// Package reboot covers two Windows admin needs the old install scripts handled
+// with a delayed-move primitive and a scatter of registry probes:
 //
 //   - Scheduling a file to be replaced or deleted at the next boot, for files
-//     that are locked/in-use right now (in-use-file replacement). This is MoveFileEx
-//     with MOVEFILE_DELAY_UNTIL_REBOOT.
+//     that are locked/in-use right now. This is MoveFileEx with
+//     MOVEFILE_DELAY_UNTIL_REBOOT.
 //   - Detecting whether the machine is already waiting on a reboot, so a rollout
 //     can hold off (or a health gate can fail) instead of stacking changes on a
 //     box that is half-patched.

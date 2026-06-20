@@ -1,7 +1,7 @@
-// Package osinfo identifies the running Windows OS the way the WinBatch
-// OS detection / the version check / the session-host check / the arch check helpers did — by reading a handful of
-// registry values and classifying them — but returns one typed Info instead of a
-// pile of ad-hoc string compares scattered across a login script.
+// Package osinfo identifies the running Windows OS the way classic login scripts
+// did — by reading a handful of registry values and classifying them — but
+// returns one typed Info instead of a pile of ad-hoc string compares scattered
+// across a script.
 //
 // The reads are Windows-only (Detect returns ErrUnsupportedPlatform elsewhere),
 // but the classification logic is pure and platform-independent, so the
@@ -58,7 +58,7 @@ func (i Info) IsServer() bool { return i.Role != Workstation }
 func (i Info) IsDomainController() bool { return i.Role == DomainController }
 
 // IsRDSHost reports whether this is a multi-user Remote Desktop Session Host —
-// the modern read of the old the session-host check() check (a server in TS application mode).
+// the modern read of the old session-host check (a server in TS application mode).
 func (i Info) IsRDSHost() bool { return i.IsServer() && i.TerminalServer }
 
 // Version is the dotted version string, e.g. "10.0.22621.1702".

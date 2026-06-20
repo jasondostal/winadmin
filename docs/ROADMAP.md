@@ -26,7 +26,7 @@ Legend: ✅ done · 🚧 in progress · ⬜ planned
 - ✅ **`push`** — copy to many machines. `robocopy … /MIR` · `scp`/`rsync`. (Rendering +
   unit-tested; robocopy form is Windows.)
 - ✅ **`reboot`** — `shutdown /r /m \\host` · linux `shutdown -r`. Guarded by `--yes`.
-- ✅ **`proc`** — kill a process: `taskkill /s host /im` · `pkill`. Echoes `the remote-process check()`.
+- ✅ **`proc`** — kill a process: `taskkill /s host /im` · `pkill`.
 - ✅ **`task`** — scheduled tasks: run/delete/query/create across machines (`schtasks /s host`).
 - ✅ **`localgroup`** — add/remove a member of a local group (`net localgroup … /add`).
 - ✅ **`firewall`** — add/delete firewall rules (`netsh advfirewall …`).

@@ -132,7 +132,7 @@ func currentUserInGroup(groupSAM string) (bool, error) {
 }
 ```
 
-This replaces the typical `the membership gate(USERNAME, "Some Group", exitIfNot)`. The "exit if not
+This replaces the typical "is the user in this group, else bail" gate. The "exit if not
 a member" behavior becomes an `if !ok { warn(); os.Exit(1) }` at the call site.
 
 ### 2b. "Enumerate groups for an *arbitrary* user/computer" → LDAP, like the original
@@ -155,7 +155,7 @@ func adGroups(sAMAccountName string) ([]string, error) {
         return nil, err                                                 // or c.Bind(user, pass)
     }
 
-    // rootDSE → defaultNamingContext, exactly like the old the domain-root lookup()
+    // rootDSE → defaultNamingContext, the standard "find the domain root" lookup
     root, err := c.Search(ldap.NewSearchRequest("", ldap.ScopeBaseObject,
         ldap.NeverDerefAliases, 0, 0, false,
         "(objectClass=*)", []string{"defaultNamingContext"}, nil))
@@ -293,7 +293,7 @@ configuration change, not a rewrite.
 | The "common thing" | WinBatch | Go |
 |---|---|---|
 | Read/write registry | `RegQueryValue` / `RegSetValue` / `RegCreateKey` | `golang.org/x/sys/windows/registry` |
-| Am I in a group? | `the membership gate` → AD/LDAP | token groups (`GetTokenGroups`) — no DC needed |
+| Am I in a group? | group-membership gate → AD/LDAP | token groups (`GetTokenGroups`) — no DC needed |
 | Enumerate a user's groups | `dsGetUsersGrps` | `go-ldap/ldap/v3`, filter `memberOf`/`tokenGroups` |
 | Run as another user w/ password | `echo pw \| su.exe` / `userexec` | `CreateProcessWithLogonW` directly |
 | Hold the password | hardcoded plaintext | `CredentialProvider`: plaintext → env → DPAPI → CredMan |

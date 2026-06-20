@@ -1,6 +1,6 @@
 // Command splash shows the winadmin dialog package's ass-ugly retro splash
-// screen — the terminal descendant of the WinBatch the splash routine() the
-// overnight installers loved. Run it:
+// screen — the terminal descendant of the splash screens overnight installers
+// loved. Run it:
 //
 //	go run ./examples/splash
 package main

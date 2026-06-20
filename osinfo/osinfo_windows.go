@@ -19,7 +19,7 @@ const (
 
 func detect() (Info, error) {
 	// Force the 64-bit view so a 32-bit build still reads the real values — the
-	// WOW64 choice the old 32-bit WinBatch interpreter never had.
+	// WOW64 choice the old 32-bit scripts never had.
 	v := reg.Force64
 
 	r := raw{

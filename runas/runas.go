@@ -1,6 +1,6 @@
 // Package runas launches a process as a different user, given a credential.
 //
-// This is the modern, in-process replacement for the WinBatch run-as trick:
+// This is the modern, in-process replacement for the legacy run-as trick:
 //
 //	cmd /c echo <password> | su.exe svc-install "cmd" -l
 //
@@ -28,7 +28,7 @@ type Options struct {
 	// WorkingDir is the starting directory ("" -> inherit).
 	WorkingDir string
 
-	// Wait blocks until the launched process exits (the WinBatch @WAIT flag).
+	// Wait blocks until the launched process exits.
 	// When false, returns as soon as the process is created (@NOWAIT).
 	Wait bool
 

@@ -1,11 +1,11 @@
 # winadmin / `fleet`
 
-**A parallel fleet-automation tool for sysadmins — inspired by the classic overnight fleet-runners of the WinBatch / SMS 2003 era,
-rebuilt in Go.** Point it at a list of machines and a task; it fans out across them with a
+**A parallel fleet-automation tool for sysadmins — inspired by the classic overnight fleet-runners of the early-2000s
+Windows admin era, rebuilt in Go.** Point it at a list of machines and a task; it fans out across them with a
 bounded worker pool, a dry-run, staged rollouts, a live TUI, and a structured audit trail.
 
 It started as a translation exercise — porting the "common things" out of a turn-of-the-
-millennium **WinBatch** desktop-automation codebase (registry edits, AD/NT group gating,
+millennium Windows desktop-automation toolkit (registry edits, AD/NT group gating,
 run-as-with-password) into idiomatic Go. It grew into a real tool. The original overnight
 "run this batch file against 350 backup DCs" job — now with brakes and a paper trail.
 
@@ -118,12 +118,12 @@ counts. And `gather --tui` turns the fleet into a **filterable report**:
 | `fleet`  | the engine: inventory (`ResolveInventory` plugins: file/cmd/aws/ad-ou/ad-group), bounded worker pool, staged rollout, transports, verb tasks, agent pull-model, slog audit, and the reporting side (`ExportResults` JSON/CSV, `FormatGather`) |
 | `secret` | `CredentialProvider` interface — plaintext / env / DPAPI / Windows Credential Manager. Secure by default; plaintext must be asked for by name |
 | `reg`    | WOW64-aware registry read/write — strings, DWORDs, multi-strings, value/key existence |
-| `osinfo` | typed OS identification from the registry — product/edition/build/arch, workstation vs server vs DC, RDS-host detection (the old `OS detection`/`the version check`/`the session-host check`/`the arch check`, in one `Info`) |
+| `osinfo` | typed OS identification from the registry — product/edition/build/arch, workstation vs server vs DC, RDS-host detection, all in one `Info` |
 | `groups` | group membership — current-user via the access token (no DC round-trip), token-group enumeration, and a leaf-name `InGroupList` predicate for gating on an externally-fetched (e.g. computer-object) list |
 | `runas`  | run a command as another user (`CreateProcessWithLogonW`) |
-| `acl`    | grant/revoke NTFS permissions via `icacls` (the modern `the NTFS-permission helper`) |
+| `acl`    | grant/revoke NTFS permissions via `icacls` |
 | `reboot` | schedule replace/delete of in-use files at next boot (`MoveFileEx`), and detect whether a reboot is already pending |
-| `dialog` | pure-ASCII homage to the chunky WinBatch `Message()` / `AskYesNo()` boxes — `Render()`/`Message`/`Warn`/`AskYesNo`. Cross-platform, zero deps, mostly for kicks |
+| `dialog` | pure-ASCII homage to the chunky retro Windows message boxes — `Render()`/`Message`/`Warn`/`AskYesNo`. Cross-platform, zero deps, mostly for kicks |
 
 ---
 

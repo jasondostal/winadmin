@@ -1,6 +1,6 @@
-// Package acl grants and revokes NTFS permissions on a file or directory — the
-// modern, icacls-backed replacement for the WinBatch the NTFS-permission helper helpers,
-// which shelled out to cacls through an SU'd helper EXE just to elevate.
+// Package acl grants and revokes NTFS permissions on a file or directory — a
+// modern, icacls-backed take on the classic "shell out to cacls to fix a folder's
+// rights" admin chore, which legacy scripts ran through an elevated helper.
 //
 // Here the elevation story is separate: run the process elevated (or hand the
 // command to runas) and call Grant/Revoke directly. The command assembly is pure

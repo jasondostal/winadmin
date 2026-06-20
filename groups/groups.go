@@ -1,4 +1,4 @@
-// Package groups answers the question the WinBatch the membership gate function answered:
+// Package groups answers the classic login-script question:
 // "is this principal a member of group X?"
 //
 // The preferred path here does NOT hit a domain controller. The current
@@ -6,7 +6,7 @@
 // resolved at logon — so CurrentUserInGroup is fast, offline-capable, and
 // correct for the "should this code be allowed to run" gate.
 //
-// For enumerating groups of an *arbitrary* user (the dsGetUsersGrps case),
+// For enumerating groups of an *arbitrary* user (the directory-lookup case),
 // query AD over LDAP from the caller; that intentionally lives outside this
 // package so the dependency footprint here stays at golang.org/x/sys.
 package groups
@@ -39,7 +39,7 @@ func CurrentUserGroups() ([]string, error) {
 // name only (any "DOMAIN\\" prefix is ignored) and case-insensitively.
 //
 // It is the dependency-free predicate behind a *computer object* membership
-// check — the modern shape of WinBatch's the computer-membership gate. This package keeps LDAP
+// check — the modern shape of a per-machine authorization gate. This package keeps LDAP
 // out on purpose, so fetch the machine's group list however you already query AD
 // (e.g. `fleet --inventory ad-group:`, an ldapsearch, or a go-ldap client in the
 // caller) and gate on it here.

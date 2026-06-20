@@ -1,8 +1,8 @@
 // Package dialog is a small, dependency-free homage to the chunky gray message
-// boxes WinBatch's Message() / AskYesNo() flung all over Windows 9x — the kind
-// the overnight scripts loved to leave waiting on a locked workstation at
-// 3 a.m. It renders that look in the terminal: a double-ruled window, a fake
-// title bar with [_][#][X] controls, an icon gutter, and chunky buttons.
+// boxes that classic Windows admin tools flung all over Windows 9x — the kind an
+// overnight script loved to leave waiting on a locked workstation at 3 a.m. It
+// renders that look in the terminal: a double-ruled window, a fake title bar
+// with [_][#][X] controls, an icon gutter, and chunky buttons.
 //
 // It draws a dialog; it does not pop a real GUI window. That is the joke — and
 // also why it works the same on every platform with zero dependencies. Render()
@@ -222,9 +222,9 @@ func AskYesNo(title, msg string) bool {
 }
 
 // Splash prints a button-less "loading" box — the terminal descendant of the
-// WinBatch the splash routine() / the status-box update() the overnight installers
-// threw up while they worked. status is the action line, e.g. "Installing Acme
-// Toolbar"; an empty status falls back to "Working".
+// splash/status boxes overnight installers threw up while they worked. status is
+// the action line, e.g. "Installing Acme Toolbar"; an empty status falls back to
+// "Working".
 func Splash(title, status string) { fmt.Println(SplashBox(title, status)) }
 
 // SplashBox returns the splash box as a string (Splash prints it).
@@ -242,9 +242,9 @@ func SplashBox(title, status string) string {
 	}.Render()
 }
 
-// Classic is the easter egg: the exact flavor of dialog the overnight
-// WinBatch jobs used to fling at half the branch every morning — drawn here in
-// loving, slightly cursed ASCII.
+// Classic is the easter egg: the exact flavor of dialog overnight installer jobs
+// used to fling at half the office every morning — drawn here in loving,
+// slightly cursed ASCII.
 func Classic() {
 	fmt.Println(Dialog{
 		Title: "WINBATCH",

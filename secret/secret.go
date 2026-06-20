@@ -4,7 +4,7 @@
 //
 //	type Provider interface { Credential() (Credential, error) }
 //
-// In the WinBatch era, the run-as account's password was a plaintext constant
+// In the old days, the run-as account's password was a plaintext constant
 // hardcoded into every script. That worked — and it was the single biggest
 // liability in the codebase. Here, the call site that needs a credential depends
 // only on the Provider interface; *where* the secret actually lives is a
@@ -64,7 +64,7 @@ type Provider interface {
 
 // Plaintext is the deliberately-insecure option: a literal credential compiled into the
 // program. It exists on purpose — for bootstrapping, for parity with the old
-// WinBatch scripts, and so the insecure choice is a deliberate, visible one.
+// scripts, and so the insecure choice is a deliberate, visible one.
 //
 // Reach for Env, DPAPI, or CredMan the moment you can. Swapping is a one-line
 // change because everything downstream only sees Provider.

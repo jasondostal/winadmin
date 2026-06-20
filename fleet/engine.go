@@ -25,7 +25,7 @@ type Options struct {
 	StopOnError bool
 
 	// Logger receives a structured audit record per target. Defaults to
-	// slog.Default(). This is the auditor trail the old scripts never had.
+	// slog.Default(). This is the audit trail the old scripts never had.
 	Logger *slog.Logger
 
 	// OnStart, if set, fires just before a target's command executes. It is
