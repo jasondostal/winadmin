@@ -77,6 +77,24 @@ The fleet is whatever you point it at — a static file *or* a live query:
 --inventory ad-group:'CN=Admins,…'             # plugin: every member of a group
 ```
 
+### Batch a script over a list — of *anything*
+
+The list isn't only machines. Put **folders, usernames, files** in it and run a
+script (or a verb) per item — the oldest fleet-runner move, with brakes:
+
+```sh
+# run a local script once per item; the item arrives as $1 (a whitespace row → $1 $2 $3)
+fleet run -L folders.txt --script ./rename-stuff.sh --what-if
+
+# name the columns of each row and template them into ANY verb
+fleet localgroup -L users.csv --csv --cols user,group \
+  --member '{{.user}}' --group '{{.group}}' --action add --what-if
+```
+
+Columns are `{{.F1}}`, `{{.F2}}`, … (split on whitespace by default; `--csv`/`--delim`
+to change it), or named with `--cols`; the whole row is always `{{.Name}}`. See
+[`examples/batch-script`](examples/batch-script/).
+
 ### Safety — what makes it *good*, not just powerful
 
 - **`--what-if`** — render every command without running anything.

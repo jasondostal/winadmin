@@ -3,6 +3,7 @@ package fleet
 import (
 	"context"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 )
@@ -143,6 +144,18 @@ func runOne(ctx context.Context, plan Plan, t Target, opts Options, log *slog.Lo
 		r.Finished = time.Now()
 		log.Error("task render failed", "target", t.Name, "err", err)
 		return r
+	}
+	// Second pass: let any verb's flags reference the row's columns ({{.user}},
+	// {{.F2}}, …). CommandTask already rendered, so its output has no {{ left and
+	// is skipped; verb commands that carried a literal {{.col}} get expanded here.
+	if strings.Contains(cmd, "{{") {
+		cmd, err = renderTemplate(cmd, t)
+		if err != nil {
+			r.Err = err
+			r.Finished = time.Now()
+			log.Error("task render failed", "target", t.Name, "err", err)
+			return r
+		}
 	}
 	r.Command = cmd
 

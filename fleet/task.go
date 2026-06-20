@@ -105,7 +105,7 @@ func renderTemplate(tmpl string, t Target) (string, error) {
 		return "", fmt.Errorf("fleet: bad command template: %w", err)
 	}
 	var b strings.Builder
-	if err := parsed.Execute(&b, t); err != nil {
+	if err := parsed.Execute(&b, t.templateData()); err != nil {
 		return "", fmt.Errorf("fleet: rendering command for %q: %w", t.Name, err)
 	}
 	return b.String(), nil

@@ -95,7 +95,7 @@ func TestFirewallTask(t *testing.T) {
 }
 
 func TestSplitBatches(t *testing.T) {
-	ts := []Target{{"a"}, {"b"}, {"c"}, {"d"}, {"e"}, {"f"}}
+	ts := []Target{{Name: "a"}, {Name: "b"}, {Name: "c"}, {Name: "d"}, {Name: "e"}, {Name: "f"}}
 	b := splitBatches(ts, 1, 2) // canary 1, then waves of 2
 	if len(b) != 4 || len(b[0]) != 1 || len(b[1]) != 2 || len(b[3]) != 1 {
 		t.Fatalf("unexpected batches: %v", b)

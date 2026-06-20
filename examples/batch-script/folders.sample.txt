@@ -1,0 +1,4 @@
+# one folder per line
+/srv/app/alpha
+/srv/app/beta
+/srv/app/gamma

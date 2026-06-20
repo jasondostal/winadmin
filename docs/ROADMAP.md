@@ -30,6 +30,12 @@ Legend: ✅ done · 🚧 in progress · ⬜ planned
 - ✅ **`task`** — scheduled tasks: run/delete/query/create across machines (`schtasks /s host`).
 - ✅ **`localgroup`** — add/remove a member of a local group (`net localgroup … /add`).
 - ✅ **`firewall`** — add/delete firewall rules (`netsh advfirewall …`).
+- ✅ **Script-per-item + row columns** — `--script` runs a local batch once per
+  list row (the item as `$1`/`%1`; a whitespace row → `$1 $2 $3`). `--csv` /
+  `--delim` / `--cols` split each row into columns (`{{.F1}}`, `{{.F2}}`, named
+  `{{.user}}`) that template into *any* verb, not just `run` — e.g. `localgroup
+  --member '{{.user}}' --group '{{.group}}'`. The list is **items**, not only
+  hosts: folders, usernames, files. See `examples/batch-script`.
 
 ## Reading — the "report" side (the sleeper hit)
 

@@ -24,10 +24,58 @@ import (
 	"strings"
 )
 
-// Target is a single machine to act on. Name is whatever appeared in the list —
-// a hostname, a server name, an IP — and is what tasks template against.
+// Target is a single item to act on. Name is whatever appeared in the list — a
+// hostname, an IP, but just as well a folder, a username, any token — and is what
+// tasks template against ({{.Name}}). A list row can carry columns: positional
+// {{.F1}}, {{.F2}}, … (split from the row) and, when named, {{.<name>}}.
 type Target struct {
-	Name string
+	Name   string
+	Fields []string          // positional columns split from the row (→ {{.F1}}…)
+	Cols   map[string]string // named columns (→ {{.<name>}})
+}
+
+// templateData is the value a command template renders against: Name, the
+// positional columns F1…Fn (whitespace-split from Name by default), and any
+// named columns. A map (not the struct) so {{.F1}}/{{.user}} resolve dynamically.
+func (t Target) templateData() map[string]any {
+	fields := t.Fields
+	if fields == nil {
+		fields = strings.Fields(t.Name)
+	}
+	m := map[string]any{"Name": t.Name}
+	for i, f := range fields {
+		m[fmt.Sprintf("F%d", i+1)] = f
+	}
+	for k, v := range t.Cols {
+		m[k] = v
+	}
+	return m
+}
+
+// SplitFields parses each row's columns for templating: split on delim (empty =
+// whitespace), and — when cols is non-empty — bind those names to the columns in
+// order, so {{.<name>}} works. The whole row remains {{.Name}}.
+func (inv *Inventory) SplitFields(delim string, cols []string) {
+	for i := range inv.Targets {
+		var fields []string
+		if delim == "" {
+			fields = strings.Fields(inv.Targets[i].Name)
+		} else {
+			for _, p := range strings.Split(inv.Targets[i].Name, delim) {
+				fields = append(fields, strings.TrimSpace(p))
+			}
+		}
+		inv.Targets[i].Fields = fields
+		if len(cols) > 0 {
+			m := make(map[string]string, len(cols))
+			for j, c := range cols {
+				if j < len(fields) {
+					m[strings.TrimSpace(c)] = fields[j]
+				}
+			}
+			inv.Targets[i].Cols = m
+		}
+	}
 }
 
 // Inventory is an ordered set of targets.

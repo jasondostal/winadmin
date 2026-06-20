@@ -131,6 +131,9 @@ type commonFlags struct {
 	inventorySpec string
 	exclude       string
 	match         string
+	csv           bool
+	delim         string
+	cols          string
 	preview       bool
 	parallelism   int
 	shuffle       bool
@@ -185,6 +188,9 @@ func registerCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.inventorySpec, "inventory", "", "inventory plugin: file:<p> | cmd:<sh> | aws:<filter> | ad-ou:<dn> | ad-group:<dn>")
 	fs.StringVar(&c.exclude, "E", "", "exclude list file")
 	fs.StringVar(&c.match, "match", "", "keep only targets matching these comma-separated globs (e.g. 'web*,db0?')")
+	fs.BoolVar(&c.csv, "csv", false, "split each list row on commas into columns ({{.F1}}, {{.F2}}, …)")
+	fs.StringVar(&c.delim, "delim", "", "split each list row on this delimiter into columns (default: whitespace; --csv = comma)")
+	fs.StringVar(&c.cols, "cols", "", "name the row columns, comma-separated, for templating: {{.<name>}} (e.g. 'user,group,script')")
 	fs.BoolVar(&c.preview, "preview", false, "resolve and print the target list (after exclude/match) and exit, without running")
 	fs.IntVar(&c.parallelism, "P", pDefault, "max targets in flight (worker-pool cap); 1 = sequential")
 	fs.BoolVar(&c.shuffle, "shuffle", false, "randomize target order")
@@ -230,6 +236,22 @@ func (c *commonFlags) stageOptions() fleet.StageOptions {
 	}
 }
 
+// fieldSplit resolves the column-split options into a delimiter ("" = whitespace)
+// and an optional list of column names.
+func (c *commonFlags) fieldSplit() (string, []string) {
+	delim := c.delim
+	if c.csv {
+		delim = ","
+	}
+	var cols []string
+	if strings.TrimSpace(c.cols) != "" {
+		for _, n := range strings.Split(c.cols, ",") {
+			cols = append(cols, strings.TrimSpace(n))
+		}
+	}
+	return delim, cols
+}
+
 func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 	var inv *fleet.Inventory
 	var err error
@@ -258,6 +280,11 @@ func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 	}
 	if c.shuffle {
 		inv.Shuffle(rand.Shuffle)
+	}
+	// Column parsing for templating: positional {{.F1}}… always work from
+	// whitespace; --csv/--delim change the split, --cols names the columns.
+	if delim, cols := c.fieldSplit(); delim != "" || len(cols) > 0 {
+		inv.SplitFields(delim, cols)
 	}
 
 	tr, err := c.buildTransport()
@@ -350,14 +377,30 @@ func (c *commonFlags) lifecycleOptions() fleet.LifecycleOptions {
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	common := registerCommon(fs)
-	cmd := fs.String("c", "", `command template, e.g. "ping -n 1 {{.Name}}" [required]`)
+	cmd := fs.String("c", "", `command template, e.g. "ping -n 1 {{.Name}}"`)
+	script := fs.String("script", "", "run this local script/batch file per item, passing the item as its argument ($1/%1)")
 	_ = fs.Parse(args)
 
+	// --script is the "run my batch against the list" shorthand: each item is
+	// passed as the script's argument (unquoted, so a multi-column row arrives
+	// as $1 $2 $3). An explicit -c always wins.
+	if *cmd == "" && *script != "" {
+		*cmd = quotePath(*script) + " {{.Name}}"
+	}
 	if *cmd == "" {
-		fmt.Fprintln(os.Stderr, "run: -c command is required")
+		fmt.Fprintln(os.Stderr, "run: -c command or --script is required")
 		os.Exit(2)
 	}
 	execute(common, fleet.CommandTask{Template: *cmd})
+}
+
+// quotePath wraps a path in double quotes only if it contains whitespace, so the
+// script invocation works on both sh and cmd without disturbing simple paths.
+func quotePath(p string) string {
+	if strings.ContainsAny(p, " \t") {
+		return `"` + p + `"`
+	}
+	return p
 }
 
 func regsetCmd(args []string) {
