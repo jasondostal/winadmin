@@ -73,6 +73,10 @@ type Console struct {
 	settingsNote  string // save confirmation / error
 
 	queries []config.NamedQuery // the gather query library (for the picker)
+
+	taskPicking bool            // command-palette overlay for choosing the verb
+	taskFilter  textinput.Model // its filter input
+	taskCursor  int             // selected row in the filtered verb list
 }
 
 func always(*Console) bool { return true }
@@ -233,6 +237,7 @@ func NewConsole() Console {
 	c.setSelectOpts("gather_query", names)
 	c.applyQuery() // prefill command/parse from the first query
 
+	c.taskFilter = taskFilterInput()
 	return c
 }
 
@@ -390,6 +395,13 @@ func (c Console) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return c, cmd
 	}
 
+	if c.taskPicking {
+		if k, ok := msg.(tea.KeyMsg); ok {
+			return c.updateTaskPicker(k)
+		}
+		return c, nil
+	}
+
 	if c.previewing {
 		if k, ok := msg.(tea.KeyMsg); ok {
 			switch k.String() {
@@ -492,6 +504,12 @@ func (c Console) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		f := &c.fields[c.focus]
 		switch f.kind {
 		case fSelect:
+			// The Task verb opens the command palette (13 verbs + descriptions);
+			// left/right still cycle for a quick nudge to an adjacent verb.
+			if f.key == "tasktype" && msg.String() == "enter" {
+				c.openTaskPicker()
+				return c, textinput.Blink
+			}
 			switch msg.String() {
 			case "left", "h":
 				f.sel = (f.sel - 1 + len(f.opts)) % len(f.opts)
@@ -860,6 +878,10 @@ func (c Console) View() string {
 		return c.settingsView()
 	}
 
+	if c.taskPicking {
+		return c.taskPickerView()
+	}
+
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("fleet — run builder") + "\n\n")
 
@@ -1013,6 +1035,15 @@ func (c Console) renderField(f field, focused bool) string {
 	var val string
 	switch f.kind {
 	case fSelect:
+		// The Task verb is a palette, not an inline cycle: show just the current
+		// verb plus a hint, so the form isn't a wall of 13 options.
+		if f.key == "tasktype" {
+			val = focusStyle.Render(f.opts[f.sel])
+			if focused {
+				val += "  " + keyStyle.Render("(enter to pick)")
+			}
+			break
+		}
 		parts := make([]string, len(f.opts))
 		for i, o := range f.opts {
 			if i == f.sel {
