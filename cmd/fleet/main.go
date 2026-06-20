@@ -702,13 +702,43 @@ func firewallCmd(args []string) {
 func gatherCmd(args []string) {
 	fs := flag.NewFlagSet("gather", flag.ExitOnError)
 	common := registerCommon(fs)
-	cmd := fs.String("c", "", `query command, e.g. "cat /etc/os-release | grep VERSION" [required]`)
+	cmd := fs.String("c", "", `query command, e.g. "cat /etc/os-release | grep VERSION"`)
+	query := fs.String("query", "", "run a named query from the library (see --list-queries)")
+	parse := fs.String("parse", "", "column parser for --tui: kv | columns | csv (overrides a named query's hint)")
+	listQueries := fs.Bool("list-queries", false, "print the named gather queries and exit")
+	registryPath := fs.String("registry", "", "registry file to join an OS column from (--tui)")
 	format := fs.String("format", "table", "table | csv | json")
 	_ = fs.Parse(args)
+
+	settings, _ := config.LoadSettings()
+	library := settings.GatherLibrary()
+	if *listQueries {
+		for _, q := range library {
+			fmt.Printf("%-26s %s\n", q.Name, q.Command)
+		}
+		return
+	}
+
+	// A named query supplies the command and parse hint unless overridden.
+	parseHint := *parse
+	if *query != "" {
+		nq, ok := findQuery(library, *query)
+		if !ok {
+			fmt.Fprintf(os.Stderr, "gather: no query named %q (try --list-queries)\n", *query)
+			os.Exit(2)
+		}
+		if *cmd == "" {
+			*cmd = nq.Command
+		}
+		if parseHint == "" {
+			parseHint = nq.Parse
+		}
+	}
 	if *cmd == "" {
-		fmt.Fprintln(os.Stderr, "gather: -c command is required")
+		fmt.Fprintln(os.Stderr, "gather: -c command or --query is required")
 		os.Exit(2)
 	}
+
 	plan, err := common.buildPlan(fleet.CommandTask{Template: *cmd})
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
@@ -723,7 +753,8 @@ func gatherCmd(args []string) {
 		return
 	}
 	if common.tui {
-		if err := tui.RunGather(plan, common.options()); err != nil {
+		osByTarget := loadOSMap(*registryPath)
+		if err := tui.RunGather(plan, common.options(), parseHint, osByTarget); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
@@ -731,6 +762,33 @@ func gatherCmd(args []string) {
 	}
 	_, results := fleet.Run(context.Background(), plan, common.options(), nil)
 	fmt.Print(fleet.FormatGather(results, *format))
+}
+
+// findQuery resolves a query by name (case-insensitive).
+func findQuery(library []config.NamedQuery, name string) (config.NamedQuery, bool) {
+	for _, q := range library {
+		if strings.EqualFold(q.Name, name) {
+			return q, true
+		}
+	}
+	return config.NamedQuery{}, false
+}
+
+// loadOSMap reads a registry (if a path is given) into a target→OS map so the
+// gather view can inject an OS column. A missing/empty path returns nil.
+func loadOSMap(path string) map[string]string {
+	if strings.TrimSpace(path) == "" {
+		return nil
+	}
+	reg, err := fleet.LoadRegistry(path)
+	if err != nil {
+		return nil
+	}
+	m := make(map[string]string, len(reg.Machines))
+	for _, mach := range reg.Machines {
+		m[mach.Name] = mach.OS
+	}
+	return m
 }
 
 // ldapsetCmd sets one attribute on every entry returned by an LDAP/AD search —

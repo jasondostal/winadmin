@@ -71,6 +71,8 @@ type Console struct {
 	settingFields []field // the settings form
 	settingFocus  int
 	settingsNote  string // save confirmation / error
+
+	queries []config.NamedQuery // the gather query library (for the picker)
 }
 
 func always(*Console) bool { return true }
@@ -104,7 +106,7 @@ func NewConsole() Console {
 	c := Console{
 		fields: []field{
 			{key: "tasktype", label: "Task", kind: fSelect, show: always,
-				opts: []string{"run", "svc", "install", "push", "reboot", "proc", "regset", "deldir", "task", "localgroup", "firewall", "ldapset"}},
+				opts: []string{"run", "gather", "svc", "install", "push", "reboot", "proc", "regset", "deldir", "task", "localgroup", "firewall", "ldapset"}},
 
 			// inventory (every verb except ldapset, which queries LDAP)
 			{key: "inventory", label: "Target list", kind: fText, input: ti("path to hosts.txt", ""), show: notTask("ldapset")},
@@ -112,6 +114,11 @@ func NewConsole() Console {
 
 			// run
 			{key: "cmd", label: "Command", kind: fText, input: ti("echo {{.Name}}", ""), show: whenTask("run")},
+
+			// gather — pick a canned query (prefills the command) or type your own
+			{key: "gather_query", label: "Query", kind: fSelect, opts: []string{"(custom)"}, show: whenTask("gather")},
+			{key: "gather_cmd", label: "Command", kind: fText, input: ti("cat /etc/os-release", ""), show: whenTask("gather")},
+			{key: "gather_parse", label: "Columns", kind: fSelect, opts: []string{"raw", "kv", "columns", "csv"}, show: whenTask("gather")},
 
 			// svc
 			{key: "svc_name", label: "Service", kind: fText, input: ti("nginx / Spooler", ""), show: whenTask("svc")},
@@ -215,7 +222,57 @@ func NewConsole() Console {
 	s, _ := config.LoadSettings()
 	c.applySettings(s)
 	c.settingFields = newSettingFields(s)
+
+	// Seed the gather query picker from the library (built-ins if none configured).
+	c.queries = s.GatherLibrary()
+	names := make([]string, 0, len(c.queries)+1)
+	for _, q := range c.queries {
+		names = append(names, q.Name)
+	}
+	names = append(names, "(custom)")
+	c.setSelectOpts("gather_query", names)
+	c.applyQuery() // prefill command/parse from the first query
+
 	return c
+}
+
+// setSelectOpts replaces a select field's options, keeping the selection in range.
+func (c *Console) setSelectOpts(key string, opts []string) {
+	for i := range c.fields {
+		if c.fields[i].key == key && c.fields[i].kind == fSelect {
+			c.fields[i].opts = opts
+			if c.fields[i].sel >= len(opts) {
+				c.fields[i].sel = 0
+			}
+			return
+		}
+	}
+}
+
+// applyQuery prefills the gather command + parse fields from the selected library
+// query. The trailing "(custom)" entry leaves the command field for you to type.
+func (c *Console) applyQuery() {
+	idx := c.selIndex("gather_query")
+	if idx < 0 || idx >= len(c.queries) {
+		return // "(custom)" — leave the command as-is
+	}
+	q := c.queries[idx]
+	c.setText("gather_cmd", q.Command)
+	parse := q.Parse
+	if parse == "" {
+		parse = "raw"
+	}
+	c.setSelect("gather_parse", parse)
+}
+
+// selIndex returns the selected option index of a select field, or -1.
+func (c Console) selIndex(key string) int {
+	for _, f := range c.fields {
+		if f.key == key && f.kind == fSelect {
+			return f.sel
+		}
+	}
+	return -1
 }
 
 // newSettingFields builds the settings form, seeded from the saved Settings.
@@ -441,6 +498,9 @@ func (c Console) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case "right", "l", " ":
 				f.sel = (f.sel + 1) % len(f.opts)
 			}
+			if f.key == "gather_query" {
+				c.applyQuery()
+			}
 			return c, nil
 		case fToggle:
 			if msg.String() == " " || msg.String() == "enter" {
@@ -531,6 +591,14 @@ func (c Console) launch() (tea.Model, tea.Cmd) {
 
 	plan := fleet.Plan{Inventory: inv, Task: task, Transport: tr}
 	opts := fleet.Options{Parallelism: parallel, DryRun: c.get("whatif") == "on", Logger: quietSlog()}
+
+	// gather is a read, not a fan-out write: hand off to the spreadsheet view,
+	// which runs the query itself and then lets you sort/group the results.
+	if tt == "gather" {
+		gv := newGatherRun(plan, opts, c.gatherParse(), nil)
+		return gv, gv.Init()
+	}
+
 	stage := fleet.StageOptions{
 		Canary:    atoi(c.get("canary")),
 		Wave:      atoi(c.get("wave")),
@@ -545,6 +613,14 @@ func (c Console) launch() (tea.Model, tea.Cmd) {
 
 	w := NewWatcher(plan, opts, stage, life)
 	return w, w.Init()
+}
+
+// gatherParse maps the picker's "Columns" choice to a parse hint ("raw" → none).
+func (c Console) gatherParse() string {
+	if p := c.get("gather_parse"); p != "raw" {
+		return p
+	}
+	return ""
 }
 
 func (c *Console) enterSettings() {
@@ -673,6 +749,11 @@ func (c Console) buildTask(tt string) (fleet.Task, error) {
 			return nil, fmt.Errorf("Command is required")
 		}
 		return fleet.CommandTask{Template: c.get("cmd")}, nil
+	case "gather":
+		if strings.TrimSpace(c.get("gather_cmd")) == "" {
+			return nil, fmt.Errorf("Query command is required")
+		}
+		return fleet.CommandTask{Template: c.get("gather_cmd")}, nil
 	case "svc":
 		if strings.TrimSpace(c.get("svc_name")) == "" {
 			return nil, fmt.Errorf("Service name is required")

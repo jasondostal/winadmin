@@ -73,7 +73,7 @@ func (b StatusBoard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.KeyMsg:
 		switch msg.String() {
-		case "q", "ctrl+c":
+		case "q", "esc", "ctrl+c":
 			return b, tea.Quit
 		case "r":
 			if !b.polling {
@@ -110,7 +110,7 @@ func (b StatusBoard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (b StatusBoard) View() string {
 	board := RenderStatusBoard(b.machines, time.Now())
 	help := "  " + keyStyle.Render("[r]") + mutedStyle.Render(" refresh   ") +
-		keyStyle.Render("[q]") + mutedStyle.Render(" quit")
+		keyStyle.Render("[q]") + mutedStyle.Render("/esc quit")
 	next := ""
 	if b.every > 0 && !b.lastPoll.IsZero() {
 		next = "   " + mutedStyle.Render("auto-refresh "+b.every.String())

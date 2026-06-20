@@ -34,6 +34,7 @@ func TestConsoleBuildsEveryVerb(t *testing.T) {
 		expect fleet.Task
 	}{
 		{"run", map[string]string{"cmd": "uptime"}, fleet.CommandTask{}},
+		{"gather", map[string]string{"gather_cmd": "df -h"}, fleet.CommandTask{}},
 		{"svc", map[string]string{"svc_name": "nginx"}, fleet.ServiceTask{}},
 		{"install", map[string]string{"inst_pkg": "a.msi"}, fleet.InstallTask{}},
 		{"push", map[string]string{"push_src": "a", "push_dst": "b"}, fleet.CopyTask{}},

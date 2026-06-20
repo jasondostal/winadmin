@@ -29,4 +29,7 @@ var (
 
 	focusStyle = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
 	keyStyle   = lipgloss.NewStyle().Foreground(colAccent).Bold(true)
+
+	// selectedStyle highlights the row/line under the cursor in list views.
+	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("231")).Background(colAccent)
 )

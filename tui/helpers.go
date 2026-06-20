@@ -2,31 +2,36 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 )
 
+// These pad/truncate by rune count, not bytes, so a multi-byte glyph (e.g. the
+// ▲/▼ sort marker) lines up with single-byte ASCII the same way on screen.
+
 func trunc(s string, n int) string {
-	if len(s) <= n {
+	r := []rune(s)
+	if len(r) <= n {
 		return s
 	}
 	if n <= 1 {
-		return s[:n]
+		return string(r[:n])
 	}
-	return s[:n-1] + "…"
+	return string(r[:n-1]) + "…"
 }
 
 func padRight(s string, n int) string {
-	if len(s) >= n {
-		return trunc(s, n)
+	if r := []rune(s); len(r) < n {
+		return s + spaces(n-len(r))
 	}
-	return s + spaces(n-len(s))
+	return trunc(s, n)
 }
 
 func padLeft(s string, n int) string {
-	if len(s) >= n {
-		return trunc(s, n)
+	if r := []rune(s); len(r) < n {
+		return spaces(n-len(r)) + s
 	}
-	return spaces(n-len(s)) + s
+	return trunc(s, n)
 }
 
 func spaces(n int) string {
@@ -35,6 +40,52 @@ func spaces(n int) string {
 		b[i] = ' '
 	}
 	return string(b)
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+// itoa formats a non-negative-friendly int without pulling in strconv at call
+// sites that just want a label.
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	neg := n < 0
+	if neg {
+		n = -n
+	}
+	var b []byte
+	for n > 0 {
+		b = append([]byte{byte('0' + n%10)}, b...)
+		n /= 10
+	}
+	if neg {
+		b = append([]byte{'-'}, b...)
+	}
+	return string(b)
+}
+
+// splitLines splits on newlines, trimming \r and dropping blank lines.
+func splitLines(s string) []string {
+	var out []string
+	for _, l := range strings.Split(s, "\n") {
+		if strings.TrimSpace(l) != "" {
+			out = append(out, strings.TrimRight(l, "\r"))
+		}
+	}
+	return out
 }
 
 // fmtDuration renders an elapsed time as M:SS or H:MM:SS, like a stopwatch.

@@ -2,6 +2,7 @@ package config
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -14,7 +15,7 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load missing: %v", err)
 	}
-	if (got != Settings{}) {
+	if !reflect.DeepEqual(got, Settings{}) {
 		t.Errorf("missing file should be zero Settings, got %+v", got)
 	}
 
@@ -31,7 +32,19 @@ func TestSettingsRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload: %v", err)
 	}
-	if got != want {
+	if !reflect.DeepEqual(got, want) {
 		t.Errorf("round-trip = %+v, want %+v", got, want)
+	}
+}
+
+func TestGatherLibraryFallback(t *testing.T) {
+	// No configured queries → the built-in defaults back the picker.
+	if got := (Settings{}).GatherLibrary(); len(got) == 0 {
+		t.Fatal("empty settings should fall back to DefaultGatherQueries")
+	}
+	custom := []NamedQuery{{Name: "mine", Command: "echo hi"}}
+	got := Settings{GatherQueries: custom}.GatherLibrary()
+	if !reflect.DeepEqual(got, custom) {
+		t.Errorf("configured queries should win, got %+v", got)
 	}
 }
