@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/jasondostal/winadmin/config"
 	"github.com/jasondostal/winadmin/fleet"
 )
 
@@ -65,6 +66,11 @@ type Console struct {
 	browseKey    string   // which text field the file picker is filling
 	previewing   bool     // showing the resolved-targets preview screen
 	previewNames []string // targets resolved for the preview
+
+	settingsMode  bool    // showing the settings screen
+	settingFields []field // the settings form
+	settingFocus  int
+	settingsNote  string // save confirmation / error
 }
 
 func always(*Console) bool { return true }
@@ -204,7 +210,66 @@ func NewConsole() Console {
 	fp.Height = 14
 	c.fp = fp
 	c.syncFocus()
+
+	// Persisted settings prefill the builder and back the settings screen.
+	s, _ := config.LoadSettings()
+	c.applySettings(s)
+	c.settingFields = newSettingFields(s)
 	return c
+}
+
+// newSettingFields builds the settings form, seeded from the saved Settings.
+func newSettingFields(s config.Settings) []field {
+	par := "15"
+	if s.Parallelism > 0 {
+		par = strconv.Itoa(s.Parallelism)
+	}
+	trSel := 0
+	if s.Transport == "ssh" {
+		trSel = 1
+	}
+	return []field{
+		{key: "s_parallel", label: "Default parallel", kind: fText, input: ti("15", par), show: always},
+		{key: "s_transport", label: "Default transport", kind: fSelect, opts: []string{"local", "ssh"}, sel: trSel, show: always},
+		{key: "s_ssh_user", label: "Default SSH user", kind: fText, input: ti("ec2-user", s.SSHUser), show: always},
+		{key: "s_ssh_key", label: "Default SSH key", kind: fText, input: ti("~/.ssh/id_ed25519", s.SSHKey), show: always},
+		{key: "s_services", label: "Services file", kind: fText, input: ti("path to services.txt", s.ServicesFile), show: always},
+		{key: "s_hosts", label: "Default target list", kind: fText, input: ti("path to hosts.txt", s.DefaultHosts), show: always},
+		{key: "s_save", label: "💾 Save settings", kind: fButton, show: always},
+	}
+}
+
+// applySettings seeds the run-builder fields from saved settings (only where set,
+// so a blank setting doesn't clobber a field's own default).
+func (c *Console) applySettings(s config.Settings) {
+	if s.Parallelism > 0 {
+		c.setText("parallel", strconv.Itoa(s.Parallelism))
+	}
+	if s.Transport != "" {
+		c.setSelect("transport", s.Transport)
+	}
+	if s.SSHUser != "" {
+		c.setText("ssh_user", s.SSHUser)
+	}
+	if s.SSHKey != "" {
+		c.setText("ssh_key", s.SSHKey)
+	}
+	if s.DefaultHosts != "" {
+		c.setText("inventory", s.DefaultHosts)
+	}
+}
+
+func (c *Console) setSelect(key, val string) {
+	for i := range c.fields {
+		if c.fields[i].key == key && c.fields[i].kind == fSelect {
+			for j, o := range c.fields[i].opts {
+				if o == val {
+					c.fields[i].sel = j
+					return
+				}
+			}
+		}
+	}
 }
 
 func (c *Console) setText(key, val string) {
@@ -281,6 +346,52 @@ func (c Console) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return c, nil
 	}
 
+	if c.settingsMode {
+		k, ok := msg.(tea.KeyMsg)
+		if !ok {
+			return c, nil
+		}
+		switch k.String() {
+		case "esc":
+			c.settingsMode = false
+			return c, nil
+		case "tab", "down":
+			c.settingFocus = (c.settingFocus + 1) % len(c.settingFields)
+			c.syncSettingFocus()
+			return c, nil
+		case "shift+tab", "up":
+			c.settingFocus = (c.settingFocus - 1 + len(c.settingFields)) % len(c.settingFields)
+			c.syncSettingFocus()
+			return c, nil
+		}
+		f := &c.settingFields[c.settingFocus]
+		switch f.kind {
+		case fSelect:
+			switch k.String() {
+			case "left", "h":
+				f.sel = (f.sel - 1 + len(f.opts)) % len(f.opts)
+			case "right", "l", " ":
+				f.sel = (f.sel + 1) % len(f.opts)
+			}
+			return c, nil
+		case fButton:
+			if k.String() == "enter" {
+				return c.saveSettings()
+			}
+			return c, nil
+		case fText:
+			if k.String() == "enter" {
+				c.settingFocus = (c.settingFocus + 1) % len(c.settingFields)
+				c.syncSettingFocus()
+				return c, nil
+			}
+			var cmd tea.Cmd
+			f.input, cmd = f.input.Update(k)
+			return c, cmd
+		}
+		return c, nil
+	}
+
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		c.width, c.height = msg.Width, msg.Height
@@ -299,6 +410,9 @@ func (c Console) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return c, nil
 		case "ctrl+g":
 			return c.launch()
+		case "ctrl+e":
+			c.enterSettings()
+			return c, nil
 		case "ctrl+p":
 			return c.preview()
 		case "ctrl+o":
@@ -431,6 +545,55 @@ func (c Console) launch() (tea.Model, tea.Cmd) {
 
 	w := NewWatcher(plan, opts, stage, life)
 	return w, w.Init()
+}
+
+func (c *Console) enterSettings() {
+	c.settingsMode = true
+	c.settingFocus = 0
+	c.settingsNote = ""
+	c.syncSettingFocus()
+}
+
+func (c *Console) syncSettingFocus() {
+	for i := range c.settingFields {
+		if c.settingFields[i].kind == fText {
+			if i == c.settingFocus {
+				c.settingFields[i].input.Focus()
+			} else {
+				c.settingFields[i].input.Blur()
+			}
+		}
+	}
+}
+
+func (c Console) getSetting(key string) string {
+	for _, f := range c.settingFields {
+		if f.key == key {
+			return f.value()
+		}
+	}
+	return ""
+}
+
+// saveSettings persists the settings form to the config file, then applies the
+// new defaults to the live run builder.
+func (c Console) saveSettings() (tea.Model, tea.Cmd) {
+	s := config.Settings{
+		Parallelism:  atoi(c.getSetting("s_parallel")),
+		Transport:    c.getSetting("s_transport"),
+		SSHUser:      strings.TrimSpace(c.getSetting("s_ssh_user")),
+		SSHKey:       strings.TrimSpace(c.getSetting("s_ssh_key")),
+		ServicesFile: strings.TrimSpace(c.getSetting("s_services")),
+		DefaultHosts: strings.TrimSpace(c.getSetting("s_hosts")),
+	}
+	path, err := config.SaveSettings(s)
+	if err != nil {
+		c.settingsNote = failStyle.Render("save failed: " + err.Error())
+		return c, nil
+	}
+	c.applySettings(s)
+	c.settingsNote = okStyle.Render("✓ saved to " + path)
+	return c, nil
 }
 
 // lifecycleOptions reads the loop / wait / start-at / pre / post fields into a
@@ -612,6 +775,10 @@ func (c Console) View() string {
 		return c.previewView()
 	}
 
+	if c.settingsMode {
+		return c.settingsView()
+	}
+
 	var b strings.Builder
 	b.WriteString(titleStyle.Render("fleet — run builder") + "\n\n")
 
@@ -627,15 +794,37 @@ func (c Console) View() string {
 	}
 
 	help := fmt.Sprintf("\n%s %s   %s %s   %s %s   %s %s   %s %s",
-		keyStyle.Render("tab"), mutedStyle.Render("next"),
-		keyStyle.Render("←/→/space"), mutedStyle.Render("change"),
-		keyStyle.Render("ctrl+p"), mutedStyle.Render("preview targets"),
+		keyStyle.Render("tab"), mutedStyle.Render("next/change"),
+		keyStyle.Render("ctrl+p"), mutedStyle.Render("preview"),
+		keyStyle.Render("ctrl+e"), mutedStyle.Render("settings"),
 		keyStyle.Render("ctrl+g"), mutedStyle.Render("launch"),
 		keyStyle.Render("esc"), mutedStyle.Render("quit"))
 	b.WriteString(help + "\n")
 
 	if c.err != "" {
 		b.WriteString("\n" + failStyle.Render("✗ "+c.err) + "\n")
+	}
+	return boxStyle.Render(b.String()) + "\n"
+}
+
+// settingsView renders the settings screen — a face over the fleet config file.
+// Values here prefill the run builder and the CLI's flag defaults.
+func (c Console) settingsView() string {
+	var b strings.Builder
+	b.WriteString(titleStyle.Render("fleet — settings") + "\n")
+	path, _ := config.SettingsPath()
+	b.WriteString(mutedStyle.Render("Saved to "+path+" — prefills the run builder and CLI defaults.") + "\n\n")
+
+	for i, f := range c.settingFields {
+		b.WriteString(c.renderField(f, i == c.settingFocus) + "\n")
+	}
+
+	b.WriteString("\n" + fmt.Sprintf("%s %s   %s %s   %s %s",
+		keyStyle.Render("tab"), mutedStyle.Render("next"),
+		keyStyle.Render("enter"), mutedStyle.Render("save (on the button)"),
+		keyStyle.Render("esc"), mutedStyle.Render("back")))
+	if c.settingsNote != "" {
+		b.WriteString("\n\n" + c.settingsNote)
 	}
 	return boxStyle.Render(b.String()) + "\n"
 }

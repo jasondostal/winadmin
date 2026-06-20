@@ -4,6 +4,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/jasondostal/winadmin/config"
 )
 
 // svcEntry pairs a Windows service's short name (what sc.exe / Get-Service want)
@@ -96,12 +98,15 @@ func loadServices() []svcEntry {
 	return out
 }
 
-// servicesFilePath resolves the services list file: $FLEET_SERVICES wins; else
-// the per-user config path (~/.config/fleet/services.txt, %AppData%\fleet on
-// Windows) when it exists. Empty means "use the built-in defaults".
+// servicesFilePath resolves the services list file, in order: $FLEET_SERVICES,
+// the settings file's services_file, then the per-user services.txt if it
+// exists. Empty means "use the built-in defaults".
 func servicesFilePath() string {
 	if p := strings.TrimSpace(os.Getenv("FLEET_SERVICES")); p != "" {
 		return p
+	}
+	if s, err := config.LoadSettings(); err == nil && s.ServicesFile != "" {
+		return s.ServicesFile
 	}
 	dir, err := os.UserConfigDir()
 	if err != nil {

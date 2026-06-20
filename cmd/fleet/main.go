@@ -26,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jasondostal/winadmin/config"
 	"github.com/jasondostal/winadmin/dialog"
 	"github.com/jasondostal/winadmin/fleet"
 	"github.com/jasondostal/winadmin/secret"
@@ -159,20 +160,32 @@ type commonFlags struct {
 
 func registerCommon(fs *flag.FlagSet) *commonFlags {
 	c := &commonFlags{}
-	fs.StringVar(&c.list, "L", "", "target list file (one machine per line)")
+	// Persisted defaults (set via `fleet tui` → settings) seed the flags; an
+	// explicit flag on the command line still wins.
+	s, _ := config.LoadSettings()
+	pDefault := 15
+	if s.Parallelism > 0 {
+		pDefault = s.Parallelism
+	}
+	transportDefault := "local"
+	if s.Transport != "" {
+		transportDefault = s.Transport
+	}
+
+	fs.StringVar(&c.list, "L", s.DefaultHosts, "target list file (one machine per line)")
 	fs.StringVar(&c.inventoryCmd, "inventory-cmd", "", "shell command whose stdout lines are the targets (dynamic inventory)")
 	fs.StringVar(&c.inventorySpec, "inventory", "", "inventory plugin: file:<p> | cmd:<sh> | aws:<filter> | ad-ou:<dn> | ad-group:<dn>")
 	fs.StringVar(&c.exclude, "E", "", "exclude list file")
 	fs.StringVar(&c.match, "match", "", "keep only targets matching these comma-separated globs (e.g. 'web*,db0?')")
 	fs.BoolVar(&c.preview, "preview", false, "resolve and print the target list (after exclude/match) and exit, without running")
-	fs.IntVar(&c.parallelism, "P", 15, "max targets in flight (worker-pool cap); 1 = sequential")
+	fs.IntVar(&c.parallelism, "P", pDefault, "max targets in flight (worker-pool cap); 1 = sequential")
 	fs.BoolVar(&c.shuffle, "shuffle", false, "randomize target order")
 	fs.BoolVar(&c.dryRun, "what-if", false, "render commands without executing them")
 	fs.DurationVar(&c.timeout, "timeout", 0, "per-target timeout, e.g. 30s (0 = none)")
 	fs.BoolVar(&c.stopOnError, "stop-on-error", false, "cancel remaining targets on first failure")
-	fs.StringVar(&c.transport, "transport", "local", "transport: local | ssh | winrm | psexec | wmi")
-	fs.StringVar(&c.sshUser, "ssh-user", "", "ssh username (transport=ssh)")
-	fs.StringVar(&c.sshKey, "ssh-key", "", "ssh private key file (transport=ssh)")
+	fs.StringVar(&c.transport, "transport", transportDefault, "transport: local | ssh | winrm | psexec | wmi")
+	fs.StringVar(&c.sshUser, "ssh-user", s.SSHUser, "ssh username (transport=ssh)")
+	fs.StringVar(&c.sshKey, "ssh-key", s.SSHKey, "ssh private key file (transport=ssh)")
 	fs.StringVar(&c.sshKnown, "ssh-known-hosts", "", "ssh known_hosts file (default ~/.ssh/known_hosts)")
 	fs.IntVar(&c.sshPort, "ssh-port", 22, "ssh port")
 	fs.BoolVar(&c.sshInsecure, "ssh-insecure-hostkey", false, "skip ssh host-key verification (POC only)")

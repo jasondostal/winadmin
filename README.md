@@ -101,8 +101,14 @@ fleet gather -L hosts.txt -c '…' --tui # a filterable results table
 ```
 
 The **run builder** speaks every verb (fields change with the task — here, `svc`, with
-type-ahead over Windows service short/display names), plus transport and staged-rollout
-options. `ctrl+o` browses for the target list; `ctrl+g` launches.
+type-ahead over Windows service short/display names), plus transport, staged-rollout, and
+lifecycle (loop/wait/pre-post) options. `ctrl+o` browses for any path field, `ctrl+p` previews
+the resolved targets, `ctrl+e` opens **settings**, and `ctrl+g` launches.
+
+**Settings** (`ctrl+e`) persist your defaults — parallelism, transport, SSH user/key, the
+services list, a default target list — to a config file (`~/.config/fleet/config.json`, or
+`$FLEET_CONFIG`). The file is the source of truth: it seeds both the run builder *and* the
+CLI's flag defaults, and an explicit flag still wins.
 
 ![fleet run builder](docs/screenshots/run-builder.png)
 
