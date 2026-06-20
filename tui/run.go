@@ -3,6 +3,7 @@ package tui
 import (
 	"io"
 	"log/slog"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/jasondostal/winadmin/fleet"
@@ -18,6 +19,17 @@ func quietSlog() *slog.Logger {
 // off to the live Watcher.
 func RunConsole() error {
 	_, err := tea.NewProgram(NewConsole(), tea.WithAltScreen()).Run()
+	return err
+}
+
+// RunStatusBoard launches the live fleet-status dashboard, polling the agent
+// service on every registered machine every `every`.
+func RunStatusBoard(reg *fleet.Registry, registryPath string, tr fleet.Transport, opts fleet.Options, svcName string, every time.Duration) error {
+	if opts.Logger == nil {
+		opts.Logger = quietSlog()
+	}
+	b := NewStatusBoard(reg, registryPath, tr, opts, svcName, every)
+	_, err := tea.NewProgram(b, tea.WithAltScreen()).Run()
 	return err
 }
 

@@ -1003,14 +1003,23 @@ func statusCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
-	plan := fleet.Plan{Inventory: reg.Inventory(), Task: fleet.CommandTask{Template: fmt.Sprintf("sc query %s", *svcName)}, Transport: tr}
 
+	// Live full-screen dashboard.
+	if common.tui {
+		if err := tui.RunStatusBoard(reg, *registryPath, tr, common.options(), *svcName, *every); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		return
+	}
+
+	plan := fleet.Plan{Inventory: reg.Inventory(), Task: fleet.CommandTask{Template: fmt.Sprintf("sc query %s", *svcName)}, Transport: tr}
 	for n := 1; cycles == 0 || n <= cycles; n++ {
 		_, results := fleet.Run(context.Background(), plan, common.options(), nil)
 		fmt.Printf("\n==== fleet status @ %s ====\n", time.Now().Format("15:04:05"))
 		running := 0
 		for _, r := range results {
-			st := agentState(r)
+			st := fleet.ServiceState(r)
 			if st == "RUNNING" {
 				running++
 			}
@@ -1026,23 +1035,6 @@ func statusCmd(args []string) {
 			break
 		}
 	}
-}
-
-// agentState extracts the service state from an `sc query` result.
-func agentState(r fleet.Result) string {
-	if r.Err != nil {
-		return "UNREACHABLE"
-	}
-	for _, line := range fleet.NonEmptyLines(r.Stdout) {
-		if strings.Contains(line, "STATE") {
-			fields := strings.Fields(line)
-			return fields[len(fields)-1]
-		}
-	}
-	if r.ExitCode != 0 {
-		return "NOT-INSTALLED"
-	}
-	return "UNKNOWN"
 }
 
 func sleepCtx(d time.Duration) bool { time.Sleep(d); return true }
