@@ -50,7 +50,7 @@ a query define the fleet (see [Inventory](#inventory)).
 | `regset` | set a registry value | `regset --hive HKLM --key 'Software\X' --name On --data 1` |
 | `deldir` | delete a directory | `deldir --path 'C$\Temp\junk'` |
 | `ldapset` | set an attribute on every user in an AD/LDAP OU | `ldapset --base 'OU=Tellers,…' --attr department --value Retail` |
-| `gather` | run a query per box, tabulate it | `gather -c 'wmic os get version' --format csv` |
+| `gather` | run a query per box, tabulate it (or `--query` a canned one) | `gather --query 'free disk (linux)' --tui` |
 | `agent` | the pull side: each box fetches + runs its own job | `agent --source \\share\job.txt --interval 60s` |
 | `provision` | install the agent as a service across a fleet + register them | `provision -L hosts.txt --transport winrm --agent-url … --job-source …` |
 | `status` | poll the registered fleet's agent service — a live dashboard | `status --tui --registry fleet-registry.json` |
@@ -116,7 +116,10 @@ CLI's flag defaults, and an explicit flag still wins.
 
 It hands off to a **live "btop-style" dashboard** (the hero shot above) — per-target spinners,
 a progress bar, running→fail→queued→done ordering, canary/wave markers, and ok/fail/skip
-counts. And `gather --tui` turns the fleet into a **filterable report**:
+counts. And `gather --tui` turns the fleet into a **spreadsheet** — it parses each box's output
+into real columns, then lets you **sort by any column** (numeric-aware), **group into an
+expandable tree** by any column (including an `OS` column joined from the registry), and
+`/`-filter across all cells:
 
 ![fleet gather table](docs/screenshots/gather.png)
 
@@ -181,6 +184,9 @@ tests — that's how the SSH-auth, `--ssh-port`, `-v`, and dynamic-inventory gap
 - **[Provisioning + status board](docs/live-fire-provisioning-2026-06-20.md)** — an 18-node
   mixed Windows fleet (Server 2016/2019/2022) provisioned to a running service and polled live
   over WinRM; two real bugs the live-fire caught and a clean teardown to $0.
+- **[gather spreadsheet](docs/live-fire-gather-2026-06-20.md)** — sort/group/columns proven on
+  an 8-box mixed-Linux lab and a **4-version Windows fleet (Server 2016/2019/2022/2025)**; the
+  fleet caught that **`wmic` is gone on Server 2025** (the canned queries moved to PowerShell/CIM).
 
 Full backlog status: **[ROADMAP.md](docs/ROADMAP.md)**.
 

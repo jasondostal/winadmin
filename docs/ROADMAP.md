@@ -91,7 +91,19 @@ as SSH-on-Linux — so these are buildable *and* testable, not blocked:
   set (canary→waves with the health gate), driven from the builder.
 - ✅ **Wave view** — the dashboard header shows the current canary/wave (`▶ CANARY 1/4`) as
   batches advance.
-- ✅ **gather view** — `fleet gather --tui` opens a scrollable, type-to-filter results table.
+- ✅ **gather view** — `fleet gather --tui` opens a spreadsheet over the per-target output:
+  it parses the query's stdout into real columns (`kv` / `columns` / `csv` hints), and you can
+  **sort by any column** (numeric-aware — `5G` < `20G`), **group into an expandable tree by any
+  column** (synthetic `TARGET`/`EXIT`, an `OS` column injected from the registry, or anything the
+  query parses out), and `/`-filter across all cells. It's "just data," spreadsheet-style.
+- ✅ **gather query library** — a config-backed set of canned queries (free disk, OS version,
+  uptime, who's logged on, …) surfaced as a picker in the run builder and resolvable by name on
+  the CLI (`fleet gather --query 'free disk (linux)'`, `--list-queries`). Built-ins ship by
+  default; override via the `gather_queries` config key.
+- ✅ **gather in the run builder** — `gather` is a first-class verb in the console; picking it
+  hands off to the spreadsheet view (it runs the query itself, then lets you sort/group).
+- ✅ **Consistent read-only keybinds** — the dashboard, status board, and gather view all quit on
+  `q`/`esc`/`ctrl+c`; gather reserves bare keys for sort/group and enters filtering with `/`.
 
 ## CI / Release / supply chain
 
