@@ -48,9 +48,28 @@ func SetDWord(h Hive, path, name string, value uint32, v View) error {
 	return setDWord(h, path, name, value, v)
 }
 
+// GetDWord reads a REG_DWORD value as a uint32. A missing key or value returns
+// ErrNotExist (test with errors.Is).
+func GetDWord(h Hive, path, name string, v View) (uint32, error) {
+	return getDWord(h, path, name, v)
+}
+
+// GetStrings reads a REG_MULTI_SZ value as a slice of strings (the RegQueryMulSz
+// equivalent). A missing key or value returns ErrNotExist.
+func GetStrings(h Hive, path, name string, v View) ([]string, error) {
+	return getStrings(h, path, name, v)
+}
+
 // Exists reports whether a value exists (the RegExistValue equivalent).
 func Exists(h Hive, path, name string, v View) (bool, error) {
 	return exists(h, path, name, v)
+}
+
+// KeyExists reports whether a key exists (the RegExistKey equivalent) — distinct
+// from Exists, which tests a value. Admin checks like "is a reboot pending?"
+// hinge on whether a marker *key* is present, not a value under it.
+func KeyExists(h Hive, path string, v View) (bool, error) {
+	return keyExists(h, path, v)
 }
 
 // ErrNotExist signals a missing key or value.
