@@ -115,11 +115,15 @@ counts. And `gather --tui` turns the fleet into a **filterable report**:
 
 | Package | Does |
 |---|---|
-| `fleet`  | the engine: inventory (+plugins), bounded worker pool, staged rollout, transports, verb tasks, agent pull-model, slog audit |
+| `fleet`  | the engine: inventory (`ResolveInventory` plugins: file/cmd/aws/ad-ou/ad-group), bounded worker pool, staged rollout, transports, verb tasks, agent pull-model, slog audit, and the reporting side (`ExportResults` JSON/CSV, `FormatGather`) |
 | `secret` | `CredentialProvider` interface — plaintext / env / DPAPI / Windows Credential Manager. Secure by default; plaintext must be asked for by name |
-| `reg`    | WOW64-aware registry read/write |
-| `groups` | group membership — current-user via the access token (no DC round-trip), arbitrary user via LDAP |
+| `reg`    | WOW64-aware registry read/write — strings, DWORDs, multi-strings, value/key existence |
+| `osinfo` | typed OS identification from the registry — product/edition/build/arch, workstation vs server vs DC, RDS-host detection (the old `OS detection`/`the version check`/`the session-host check`/`the arch check`, in one `Info`) |
+| `groups` | group membership — current-user via the access token (no DC round-trip), token-group enumeration, and a leaf-name `InGroupList` predicate for gating on an externally-fetched (e.g. computer-object) list |
 | `runas`  | run a command as another user (`CreateProcessWithLogonW`) |
+| `acl`    | grant/revoke NTFS permissions via `icacls` (the modern `the NTFS-permission helper`) |
+| `reboot` | schedule replace/delete of in-use files at next boot (`MoveFileEx`), and detect whether a reboot is already pending |
+| `dialog` | pure-ASCII homage to the chunky WinBatch `Message()` / `AskYesNo()` boxes — `Render()`/`Message`/`Warn`/`AskYesNo`. Cross-platform, zero deps, mostly for kicks |
 
 ---
 
