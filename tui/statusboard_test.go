@@ -19,7 +19,7 @@ func TestRenderStatusBoard(t *testing.T) {
 
 	for _, want := range []string{
 		"fleet status", "2/3 agents up", "web01", "ws-06", "UNREACHABLE",
-		"Windows 11:", "Windows Server 2022:",
+		"Windows 11", "Windows Server 2022",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status board missing %q:\n%s", want, out)

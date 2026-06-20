@@ -141,14 +141,14 @@ func RenderStatusBoard(machines []fleet.Machine, now time.Time) string {
 			mutedStyle.Render(relTime(m.LastSeen, now))))
 	}
 
-	// per-OS roll-up
+	// per-OS roll-up, stacked so the board width is driven by the rows.
 	oss := make([]string, 0, len(byOS))
 	for k := range byOS {
 		oss = append(oss, k)
 	}
 	sort.Strings(oss)
-	parts := make([]string, 0, len(oss))
-	for _, k := range oss {
+	b.WriteString("\n" + strings.Repeat("─", nameW+osW+22) + "\n")
+	for i, k := range oss {
 		c := byOS[k]
 		label := k
 		if label == "" {
@@ -158,10 +158,11 @@ func RenderStatusBoard(machines []fleet.Machine, now time.Time) string {
 		if c[0] < c[1] {
 			style = warnStyle
 		}
-		parts = append(parts, mutedStyle.Render(label+":")+" "+style.Render(fmt.Sprintf("%d/%d", c[0], c[1])))
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		b.WriteString(" " + mutedStyle.Render(padRight(label, osW)) + "  " + style.Render(fmt.Sprintf("%d/%d", c[0], c[1])))
 	}
-	b.WriteString("\n" + strings.Repeat("─", nameW+osW+24) + "\n")
-	b.WriteString(strings.Join(parts, "    "))
 
 	return boxStyle.Render(b.String())
 }
