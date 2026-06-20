@@ -19,12 +19,14 @@ package main
 
 import (
 	"context"
+	"encoding/base64"
 	"flag"
 	"fmt"
 	"math/rand"
 	"os"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/jasondostal/winadmin/config"
 	"github.com/jasondostal/winadmin/dialog"
@@ -70,6 +72,10 @@ func main() {
 		gatherCmd(args)
 	case "agent":
 		agentCmd(args)
+	case "provision":
+		provisionCmd(args)
+	case "status":
+		statusCmd(args)
 	case "tui":
 		if err := tui.RunConsole(); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -104,6 +110,8 @@ Subcommands:
   ldapset set an LDAP/AD attribute on every entry in an OU
                                                 (--ldap-url --bind-dn --base --attr --value)
   gather  run a query per target, tabulate it    (-c "cmd" --format table|csv|json)
+  provision install the agent as a service + register them  (--agent-url --job-source)
+  status  poll the registered fleet's agent service (--registry --loop 0 --every 10s)
   tui     interactive run builder + live dashboard
 
 Targets come from -L <file> or --inventory-cmd "<shell producing one target per line>".
@@ -252,10 +260,20 @@ func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 		inv.Shuffle(rand.Shuffle)
 	}
 
-	var tr fleet.Transport
+	tr, err := c.buildTransport()
+	if err != nil {
+		return fleet.Plan{}, err
+	}
+	return fleet.Plan{Inventory: inv, Task: task, Transport: tr}, nil
+}
+
+// buildTransport constructs the transport from the flags — shared by buildPlan
+// and the registry-driven commands (provision/status) that supply their own
+// inventory.
+func (c *commonFlags) buildTransport() (fleet.Transport, error) {
 	switch c.transport {
 	case "local", "":
-		tr = fleet.LocalTransport{}
+		return fleet.LocalTransport{}, nil
 	case "ssh":
 		var pwProvider secret.Provider
 		if c.sshPwEnv != "" {
@@ -265,7 +283,7 @@ func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 			}
 			pwProvider = secret.Plaintext{User: user, Password: os.Getenv(c.sshPwEnv)}
 		}
-		tr = fleet.SSHTransport{
+		return fleet.SSHTransport{
 			User:                  c.sshUser,
 			Port:                  c.sshPort,
 			KeyPath:               c.sshKey,
@@ -273,7 +291,7 @@ func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 			PasswordProvider:      pwProvider,
 			KnownHostsPath:        c.sshKnown,
 			InsecureIgnoreHostKey: c.sshInsecure,
-		}
+		}, nil
 	case "winrm":
 		user := c.winrmUser
 		if user == "" {
@@ -283,30 +301,28 @@ func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 		if c.winrmPwEnv != "" {
 			pw = secret.Plaintext{User: user, Password: os.Getenv(c.winrmPwEnv)}
 		}
-		tr = fleet.WinRMTransport{
+		return fleet.WinRMTransport{
 			User:             user,
 			PasswordProvider: pw,
 			Port:             c.winrmPort,
 			HTTPS:            c.winrmHTTPS,
 			Insecure:         c.winrmInsecure,
-		}
+		}, nil
 	case "psexec":
 		var pw secret.Provider
 		if c.winrmPwEnv != "" {
 			pw = secret.Plaintext{User: c.winrmUser, Password: os.Getenv(c.winrmPwEnv)}
 		}
-		tr = fleet.PsExecTransport{User: c.winrmUser, PasswordProvider: pw}
+		return fleet.PsExecTransport{User: c.winrmUser, PasswordProvider: pw}, nil
 	case "wmi":
 		var pw secret.Provider
 		if c.winrmPwEnv != "" {
 			pw = secret.Plaintext{User: c.winrmUser, Password: os.Getenv(c.winrmPwEnv)}
 		}
-		tr = fleet.WMITransport{User: c.winrmUser, PasswordProvider: pw}
+		return fleet.WMITransport{User: c.winrmUser, PasswordProvider: pw}, nil
 	default:
-		return fleet.Plan{}, fmt.Errorf("unknown transport %q", c.transport)
+		return nil, fmt.Errorf("unknown transport %q", c.transport)
 	}
-
-	return fleet.Plan{Inventory: inv, Task: task, Transport: tr}, nil
 }
 
 func (c *commonFlags) options() fleet.Options {
@@ -829,6 +845,15 @@ func agentCmd(args []string) {
 		}
 	}
 
+	// If the Windows SCM started us, run under the service control protocol
+	// (this is what `fleet provision` installs via `sc create`).
+	if handled, err := runAsService("fleetagent", *interval, poll); err != nil {
+		fmt.Fprintln(os.Stderr, "agent service:", err)
+		os.Exit(1)
+	} else if handled {
+		return
+	}
+
 	if *interval <= 0 || *once {
 		poll()
 		return
@@ -839,6 +864,185 @@ func agentCmd(args []string) {
 			return
 		}
 	}
+}
+
+// provisionCmd installs the agent as a service across a fleet and records each
+// box in the registry. Each target downloads fleet.exe from --agent-url, then
+// `sc create`s + starts the service (driven over winrm). The whole install is a
+// base64-encoded PowerShell payload, so there's no cmd/sc.exe quoting to fight.
+func provisionCmd(args []string) {
+	fs := flag.NewFlagSet("provision", flag.ExitOnError)
+	common := registerCommon(fs)
+	agentURL := fs.String("agent-url", "", "URL the box downloads fleet.exe from [required]")
+	jobSource := fs.String("job-source", "", "agent job source (fleet agent --source) [required]")
+	installDir := fs.String("install-dir", `C:\fleet`, "install directory on the target")
+	interval := fs.String("interval", "60s", "agent poll interval")
+	svcName := fs.String("service", "fleetagent", "Windows service name")
+	registryPath := fs.String("registry", "fleet-registry.json", "registry file to create/update")
+	_ = fs.Parse(args)
+	if *agentURL == "" || *jobSource == "" {
+		fmt.Fprintln(os.Stderr, "provision: --agent-url and --job-source are required")
+		os.Exit(2)
+	}
+
+	script := provisionScript(*installDir, *agentURL, *jobSource, *interval, *svcName)
+	cmd := "powershell -NoProfile -ExecutionPolicy Bypass -EncodedCommand " + psEncoded(script)
+	plan, err := common.buildPlan(fleet.CommandTask{Template: cmd})
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	if plan.Inventory.Len() == 0 {
+		fmt.Fprintln(os.Stderr, "no targets — nothing to provision")
+		os.Exit(1)
+	}
+	if common.preview {
+		previewTargets(plan)
+		return
+	}
+
+	fmt.Printf("provision :: %d target(s) over %s — install service %q from %s\n\n",
+		plan.Inventory.Len(), plan.Transport.Describe(), *svcName, *agentURL)
+	onResult := func(done, total int, r fleet.Result) {
+		status := "ok"
+		switch {
+		case r.Err != nil:
+			status = "ERROR: " + r.Err.Error()
+		case r.ExitCode != 0:
+			status = fmt.Sprintf("exit %d", r.ExitCode)
+		}
+		fmt.Printf("[%d/%d] %-24s %s\n", done, total, r.Target, status)
+		if common.showOutput {
+			for _, l := range fleet.NonEmptyLines(r.Stdout) {
+				fmt.Printf("        | %s\n", l)
+			}
+		}
+	}
+	_, results := fleet.Run(context.Background(), plan, common.options(), onResult)
+
+	reg, err := fleet.LoadRegistry(*registryPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "registry:", err)
+		os.Exit(1)
+	}
+	ok := 0
+	for _, r := range results {
+		if r.OK() {
+			reg.Upsert(fleet.Machine{Name: r.Target, OS: "windows", ProvisionedAt: time.Now(), LastStatus: "PROVISIONED"})
+			ok++
+		}
+	}
+	if err := reg.Save(*registryPath); err != nil {
+		fmt.Fprintln(os.Stderr, "registry save:", err)
+		os.Exit(1)
+	}
+	fmt.Printf("\nprovisioned %d/%d — registry: %s\n", ok, len(results), *registryPath)
+	if ok < len(results) {
+		os.Exit(1)
+	}
+}
+
+// provisionScript is the PowerShell that runs on each box: fetch the agent,
+// (re)create the service, start it, and report its state. Wrapped in try/catch so
+// a failure comes back as a readable message, with the progress bar silenced
+// (it hangs Invoke-WebRequest in non-interactive WinRM sessions).
+func provisionScript(dir, url, jobSrc, interval, svc string) string {
+	binPath := fmt.Sprintf(`%s\fleet.exe agent --source %s --interval %s --state %s\agent.state`, dir, jobSrc, interval, dir)
+	body := strings.Join([]string{
+		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path '%s' | Out-Null`, dir),
+		fmt.Sprintf(`Invoke-WebRequest -UseBasicParsing -Uri '%s' -OutFile '%s\fleet.exe'`, url, dir),
+		fmt.Sprintf(`& sc.exe stop %s | Out-Null`, svc),
+		fmt.Sprintf(`& sc.exe delete %s | Out-Null`, svc),
+		// Wait for the old service to fully delete before recreating (idempotent re-runs).
+		fmt.Sprintf(`$deadline=(Get-Date).AddSeconds(15); while((Get-Date) -lt $deadline){ & sc.exe query %s *>$null; if($LASTEXITCODE -ne 0){break}; Start-Sleep -Milliseconds 400 }`, svc),
+		fmt.Sprintf(`& sc.exe create %s binPath= '%s' start= auto | Out-Null`, svc, binPath),
+		fmt.Sprintf(`& sc.exe start %s | Out-Null`, svc),
+		`Start-Sleep -Seconds 1`,
+		fmt.Sprintf(`$q = (& sc.exe query %s | Out-String)`, svc),
+		`Write-Output ('STATE: ' + (($q -split "` + "`n" + `") | Where-Object { $_ -match 'STATE' }))`,
+	}, "; ")
+	return `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; ` +
+		`[Net.ServicePointManager]::SecurityProtocol=[Net.SecurityProtocolType]::Tls12; ` +
+		`try { ` + body + ` } catch { Write-Output ('PROVISION-ERROR: ' + $_.Exception.Message); exit 1 }`
+}
+
+// psEncoded UTF-16LE-base64-encodes a script for `powershell -EncodedCommand`.
+func psEncoded(script string) string {
+	u := utf16.Encode([]rune(script))
+	b := make([]byte, len(u)*2)
+	for i, r := range u {
+		b[2*i] = byte(r)
+		b[2*i+1] = byte(r >> 8)
+	}
+	return base64.StdEncoding.EncodeToString(b)
+}
+
+// statusCmd is the live status board: poll the agent service on every registered
+// machine on a cycle, tabulate, and stamp last_status/last_seen in the registry.
+// The heartbeat-by-polling model — the engine's fan-out IS the poller.
+func statusCmd(args []string) {
+	fs := flag.NewFlagSet("status", flag.ExitOnError)
+	common := registerCommon(fs)
+	registryPath := fs.String("registry", "fleet-registry.json", "registry file to read/update")
+	svcName := fs.String("service", "fleetagent", "agent service to query")
+	every := fs.Duration("every", 10*time.Second, "delay between cycles")
+	_ = fs.Parse(args)
+	cycles := common.loop // --loop N (0 = forever); reuses the common lifecycle flag
+
+	reg, err := fleet.LoadRegistry(*registryPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "registry:", err)
+		os.Exit(1)
+	}
+	if len(reg.Machines) == 0 {
+		fmt.Fprintln(os.Stderr, "no machines in registry", *registryPath)
+		os.Exit(1)
+	}
+	tr, err := common.buildTransport()
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "error:", err)
+		os.Exit(1)
+	}
+	plan := fleet.Plan{Inventory: reg.Inventory(), Task: fleet.CommandTask{Template: fmt.Sprintf("sc query %s", *svcName)}, Transport: tr}
+
+	for n := 1; cycles == 0 || n <= cycles; n++ {
+		_, results := fleet.Run(context.Background(), plan, common.options(), nil)
+		fmt.Printf("\n==== fleet status @ %s ====\n", time.Now().Format("15:04:05"))
+		running := 0
+		for _, r := range results {
+			st := agentState(r)
+			if st == "RUNNING" {
+				running++
+			}
+			fmt.Printf("  %-24s %s\n", r.Target, st)
+			reg.Upsert(fleet.Machine{Name: r.Target, LastStatus: st, LastSeen: time.Now()})
+		}
+		fmt.Printf("  ---- %d/%d running ----\n", running, len(results))
+		_ = reg.Save(*registryPath)
+		if cycles != 0 && n >= cycles {
+			break
+		}
+		if !sleepCtx(*every) {
+			break
+		}
+	}
+}
+
+// agentState extracts the service state from an `sc query` result.
+func agentState(r fleet.Result) string {
+	if r.Err != nil {
+		return "UNREACHABLE"
+	}
+	for _, line := range fleet.NonEmptyLines(r.Stdout) {
+		if strings.Contains(line, "STATE") {
+			fields := strings.Fields(line)
+			return fields[len(fields)-1]
+		}
+	}
+	if r.ExitCode != 0 {
+		return "NOT-INSTALLED"
+	}
+	return "UNKNOWN"
 }
 
 func sleepCtx(d time.Duration) bool { time.Sleep(d); return true }
