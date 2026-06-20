@@ -17,8 +17,9 @@ import (
 
 // Machine is one provisioned box.
 type Machine struct {
-	Name          string    `json:"name"`
-	OS            string    `json:"os,omitempty"` // "windows" | "linux"
+	Name          string    `json:"name"`               // the connection target (host/IP)
+	Hostname      string    `json:"hostname,omitempty"` // the box's own computer name
+	OS            string    `json:"os,omitempty"`       // per-machine, captured at provision
 	AgentVersion  string    `json:"agent_version,omitempty"`
 	ProvisionedAt time.Time `json:"provisioned_at,omitempty"`
 	LastStatus    string    `json:"last_status,omitempty"` // free-form, set by the status board
@@ -65,8 +66,19 @@ func (r *Registry) Save(path string) error {
 func (r *Registry) Upsert(m Machine) {
 	for i := range r.Machines {
 		if strings.EqualFold(r.Machines[i].Name, m.Name) {
+			// Preserve fields the caller didn't set, so a status refresh (which
+			// only carries LastStatus/LastSeen) doesn't wipe OS / version / when.
 			if m.ProvisionedAt.IsZero() {
 				m.ProvisionedAt = r.Machines[i].ProvisionedAt
+			}
+			if m.OS == "" {
+				m.OS = r.Machines[i].OS
+			}
+			if m.Hostname == "" {
+				m.Hostname = r.Machines[i].Hostname
+			}
+			if m.AgentVersion == "" {
+				m.AgentVersion = r.Machines[i].AgentVersion
 			}
 			r.Machines[i] = m
 			return

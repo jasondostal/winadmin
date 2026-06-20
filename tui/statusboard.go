@@ -72,6 +72,8 @@ func relTime(t, now time.Time) string {
 		d = 0
 	}
 	switch {
+	case d < time.Second:
+		return fmt.Sprintf("%dms ago", d.Milliseconds())
 	case d < time.Minute:
 		return fmt.Sprintf("%ds ago", int(d.Seconds()))
 	case d < time.Hour:
@@ -79,6 +81,14 @@ func relTime(t, now time.Time) string {
 	default:
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
 	}
+}
+
+// displayName prefers the box's own hostname, falling back to the connect target.
+func displayName(m fleet.Machine) string {
+	if m.Hostname != "" {
+		return m.Hostname
+	}
+	return m.Name
 }
 
 // RenderStatusBoard draws the live fleet-status dashboard for the given machines.
@@ -102,8 +112,8 @@ func RenderStatusBoard(machines []fleet.Machine, now time.Time) string {
 			c[0]++
 		}
 		byOS[m.OS] = c
-		if len(m.Name) > nameW {
-			nameW = len(m.Name)
+		if n := len(displayName(m)); n > nameW {
+			nameW = n
 		}
 		if len(m.OS) > osW {
 			osW = len(m.OS)
@@ -112,8 +122,8 @@ func RenderStatusBoard(machines []fleet.Machine, now time.Time) string {
 	if nameW > 32 {
 		nameW = 32
 	}
-	if osW > 24 {
-		osW = 24
+	if osW > 34 {
+		osW = 34
 	}
 
 	var b strings.Builder
@@ -125,7 +135,7 @@ func RenderStatusBoard(machines []fleet.Machine, now time.Time) string {
 	for _, m := range rows {
 		b.WriteString(fmt.Sprintf(" %s  %s  %s  %s %s\n",
 			stateStyle(m.LastStatus).Render(stateIcon(m.LastStatus)),
-			valueStyle.Render(padRight(m.Name, nameW)),
+			valueStyle.Render(padRight(displayName(m), nameW)),
 			mutedStyle.Render(padRight(m.OS, osW)),
 			stateStyle(m.LastStatus).Render(padRight(m.LastStatus, 12)),
 			mutedStyle.Render(relTime(m.LastSeen, now))))

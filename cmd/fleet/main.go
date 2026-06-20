@@ -928,7 +928,16 @@ func provisionCmd(args []string) {
 	ok := 0
 	for _, r := range results {
 		if r.OK() {
-			reg.Upsert(fleet.Machine{Name: r.Target, OS: "windows", ProvisionedAt: time.Now(), LastStatus: "PROVISIONED"})
+			host, os := "", "Windows"
+			for _, l := range fleet.NonEmptyLines(r.Stdout) {
+				if v, found := strings.CutPrefix(l, "HOST: "); found {
+					host = strings.TrimSpace(v)
+				}
+				if v, found := strings.CutPrefix(l, "OS: "); found {
+					os = strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(v), "Microsoft "))
+				}
+			}
+			reg.Upsert(fleet.Machine{Name: r.Target, Hostname: host, OS: os, ProvisionedAt: time.Now(), LastStatus: "PROVISIONED"})
 			ok++
 		}
 	}
@@ -960,6 +969,8 @@ func provisionScript(dir, url, jobSrc, interval, svc string) string {
 		fmt.Sprintf(`& sc.exe start %s | Out-Null`, svc),
 		`Start-Sleep -Seconds 1`,
 		fmt.Sprintf(`$q = (& sc.exe query %s | Out-String)`, svc),
+		`Write-Output ('HOST: ' + $env:COMPUTERNAME)`,
+		`Write-Output ('OS: ' + (Get-CimInstance Win32_OperatingSystem).Caption)`,
 		`Write-Output ('STATE: ' + (($q -split "` + "`n" + `") | Where-Object { $_ -match 'STATE' }))`,
 	}, "; ")
 	return `$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; ` +
