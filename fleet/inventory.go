@@ -1,6 +1,7 @@
 // Package fleet is a parallel fan-out engine for running a task across a list of
-// machines — inspired by the classic overnight fleet-runners of the WinBatch/SMS
-// era, which fired a batch file at hundreds of servers with bounded concurrency.
+// machines — inspired by the classic overnight fleet-runners of the early-2000s
+// Windows admin era, which fired a batch file at hundreds of servers with
+// bounded concurrency.
 //
 // The shape is unchanged; the primitives are just better:
 //
@@ -19,6 +20,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"strings"
 )
 
@@ -34,7 +36,7 @@ type Inventory struct {
 }
 
 // LoadInventory reads a target list file: one machine per line. Blank lines and
-// lines beginning with '#' or ';' (WinBatch comment style) are ignored, as is
+// lines beginning with '#' or ';' (shell/INI comment style) are ignored, as is
 // trailing whitespace. This is the modern /L: target list.
 func LoadInventory(path string) (*Inventory, error) {
 	f, err := os.Open(path)
@@ -142,6 +144,40 @@ func (inv *Inventory) ExcludeFromFile(path string) error {
 		names[i] = t.Name
 	}
 	inv.Exclude(names)
+	return nil
+}
+
+// Match keeps only targets whose name matches at least one of the glob patterns
+// (case-insensitive; '*' and '?' wildcards, via path.Match). An empty/blank
+// pattern set is a no-op. A malformed pattern returns an error. This is the
+// "filter the list" knob — keep just the web boxes, just one site's DCs — the
+// list-filtering wish the old fleet-runner never shipped.
+func (inv *Inventory) Match(patterns []string) error {
+	var globs []string
+	for _, p := range patterns {
+		if p = strings.ToLower(strings.TrimSpace(p)); p != "" {
+			globs = append(globs, p)
+		}
+	}
+	if len(globs) == 0 {
+		return nil
+	}
+	for _, g := range globs {
+		if _, err := path.Match(g, ""); err != nil {
+			return fmt.Errorf("fleet: bad match pattern %q: %w", g, err)
+		}
+	}
+	kept := inv.Targets[:0]
+	for _, t := range inv.Targets {
+		name := strings.ToLower(t.Name)
+		for _, g := range globs {
+			if ok, _ := path.Match(g, name); ok {
+				kept = append(kept, t)
+				break
+			}
+		}
+	}
+	inv.Targets = kept
 	return nil
 }
 

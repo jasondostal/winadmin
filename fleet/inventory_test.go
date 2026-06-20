@@ -38,3 +38,44 @@ func TestInventoryFromCommandError(t *testing.T) {
 		t.Fatal("expected error from failing inventory command")
 	}
 }
+
+func TestInventoryMatch(t *testing.T) {
+	inv := &Inventory{Targets: []Target{
+		{Name: "web01.corp.com"}, {Name: "web02.corp.com"}, {Name: "db01.corp.com"}, {Name: "DC1"},
+	}}
+	if err := inv.Match([]string{"web*", " dc? "}); err != nil { // case-insensitive, trims
+		t.Fatal(err)
+	}
+	if inv.Len() != 3 {
+		t.Fatalf("got %d targets, want 3: %+v", inv.Len(), inv.Targets)
+	}
+	got := map[string]bool{}
+	for _, tg := range inv.Targets {
+		got[tg.Name] = true
+	}
+	for _, want := range []string{"web01.corp.com", "web02.corp.com", "DC1"} {
+		if !got[want] {
+			t.Errorf("expected %q kept", want)
+		}
+	}
+	if got["db01.corp.com"] {
+		t.Error("db01 should have been filtered out")
+	}
+}
+
+func TestInventoryMatchEmptyIsNoop(t *testing.T) {
+	inv := &Inventory{Targets: []Target{{Name: "a"}, {Name: "b"}}}
+	if err := inv.Match([]string{"", "  "}); err != nil {
+		t.Fatal(err)
+	}
+	if inv.Len() != 2 {
+		t.Fatal("blank patterns should be a no-op")
+	}
+}
+
+func TestInventoryMatchBadPattern(t *testing.T) {
+	inv := &Inventory{Targets: []Target{{Name: "a"}}}
+	if err := inv.Match([]string{"[bad"}); err == nil {
+		t.Fatal("expected error for malformed pattern")
+	}
+}

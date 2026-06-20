@@ -74,7 +74,7 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-	case "egg": // undocumented: the favorite 3 a.m. dialog
+	case "egg": // undocumented: the retro 3 a.m. installer dialog
 		dialog.Classic()
 	case "-h", "--help", "help":
 		usage()
@@ -106,6 +106,8 @@ Subcommands:
   tui     interactive run builder + live dashboard
 
 Targets come from -L <file> or --inventory-cmd "<shell producing one target per line>".
+Filter/preview: --match 'web*,db0?' keeps matching targets; --preview prints the
+resolved target list and exits without running.
 Staged rollout (most verbs): --canary N --wave M --health-cmd '<check>' --pause 10s.
 Add --tui to a verb to watch that run in the live dashboard.
 Run "fleet <subcommand> -h" for subcommand flags.
@@ -118,6 +120,8 @@ type commonFlags struct {
 	inventoryCmd  string
 	inventorySpec string
 	exclude       string
+	match         string
+	preview       bool
 	parallelism   int
 	shuffle       bool
 	dryRun        bool
@@ -153,6 +157,8 @@ func registerCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.inventoryCmd, "inventory-cmd", "", "shell command whose stdout lines are the targets (dynamic inventory)")
 	fs.StringVar(&c.inventorySpec, "inventory", "", "inventory plugin: file:<p> | cmd:<sh> | aws:<filter> | ad-ou:<dn> | ad-group:<dn>")
 	fs.StringVar(&c.exclude, "E", "", "exclude list file")
+	fs.StringVar(&c.match, "match", "", "keep only targets matching these comma-separated globs (e.g. 'web*,db0?')")
+	fs.BoolVar(&c.preview, "preview", false, "resolve and print the target list (after exclude/match) and exit, without running")
 	fs.IntVar(&c.parallelism, "P", 15, "max targets in flight (worker-pool cap); 1 = sequential")
 	fs.BoolVar(&c.shuffle, "shuffle", false, "randomize target order")
 	fs.BoolVar(&c.dryRun, "what-if", false, "render commands without executing them")
@@ -210,6 +216,11 @@ func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 	}
 	if c.exclude != "" {
 		if err := inv.ExcludeFromFile(c.exclude); err != nil {
+			return fleet.Plan{}, err
+		}
+	}
+	if c.match != "" {
+		if err := inv.Match(strings.Split(c.match, ",")); err != nil {
 			return fleet.Plan{}, err
 		}
 	}
@@ -336,7 +347,7 @@ func deldirCmd(args []string) {
 // guardDestructive refuses a destructive verb that would hit more than one
 // target unless --yes (or --what-if) is given — confirm-on-blast.
 func guardDestructive(c *commonFlags, verb string) {
-	if c.dryRun || c.yes {
+	if c.dryRun || c.yes || c.preview {
 		return
 	}
 	n := 2 // unknown until inventory loads; treat as "many" to be safe
@@ -357,7 +368,21 @@ func execute(common *commonFlags, task fleet.Task) {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
+	if common.preview {
+		previewTargets(plan)
+		return
+	}
 	runPlan(plan, common.options(), common.stageOptions(), common.tui, common.showOutput, common.export)
+}
+
+// previewTargets prints the resolved target list (post inventory/exclude/match)
+// without running anything — "show me exactly who I'm about to hit."
+func previewTargets(plan fleet.Plan) {
+	fmt.Printf("fleet :: %s\n", plan.Task.Describe())
+	fmt.Printf("%d target(s) after inventory/exclude/match:\n\n", plan.Inventory.Len())
+	for _, t := range plan.Inventory.Targets {
+		fmt.Printf("  %s\n", t.Name)
+	}
 }
 
 // runPlan executes a built plan and renders progress + summary. Shared by every
@@ -590,6 +615,10 @@ func gatherCmd(args []string) {
 		fmt.Fprintln(os.Stderr, "no targets — nothing to gather")
 		os.Exit(1)
 	}
+	if common.preview {
+		previewTargets(plan)
+		return
+	}
 	if common.tui {
 		if err := tui.RunGather(plan, common.options()); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
@@ -606,7 +635,7 @@ func gatherCmd(args []string) {
 // ldapsearch; the per-entry change is an ldapmodify run via the local transport,
 // so it reuses the whole engine (pool, dry-run, audit, TUI). No new dependency:
 // it shells out to ldap-utils, the modern equivalent of the old dsmod/Set-ADUser
-// the WinBatch scripts called.
+// the legacy scripts called.
 func ldapsetCmd(args []string) {
 	fs := flag.NewFlagSet("ldapset", flag.ExitOnError)
 	url := fs.String("ldap-url", "", "LDAP URI, e.g. ldap://dc01.corp.com [required]")

@@ -60,6 +60,10 @@ type Console struct {
 	err      string
 	browsing bool
 	fp       filepicker.Model
+
+	browseKey    string   // which text field the file picker is filling
+	previewing   bool     // showing the resolved-targets preview screen
+	previewNames []string // targets resolved for the preview
 }
 
 func always(*Console) bool { return true }
@@ -97,6 +101,7 @@ func NewConsole() Console {
 
 			// inventory (every verb except ldapset, which queries LDAP)
 			{key: "inventory", label: "Target list", kind: fText, input: ti("path to hosts.txt", ""), show: notTask("ldapset")},
+			{key: "match", label: "Match (globs)", kind: fText, input: ti("web*,db0? (optional)", ""), show: notTask("ldapset")},
 
 			// run
 			{key: "cmd", label: "Command", kind: fText, input: ti("echo {{.Name}}", ""), show: whenTask("run")},
@@ -249,10 +254,23 @@ func (c Console) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		var cmd tea.Cmd
 		c.fp, cmd = c.fp.Update(msg)
 		if did, path := c.fp.DidSelectFile(msg); did {
-			c.setText("inventory", path)
+			c.setText(c.browseKey, path)
 			c.browsing = false
 		}
 		return c, cmd
+	}
+
+	if c.previewing {
+		if k, ok := msg.(tea.KeyMsg); ok {
+			switch k.String() {
+			case "esc":
+				c.previewing = false
+			case "enter", "ctrl+g":
+				c.previewing = false
+				return c.launch()
+			}
+		}
+		return c, nil
 	}
 
 	switch msg := msg.(type) {
@@ -273,8 +291,12 @@ func (c Console) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return c, nil
 		case "ctrl+g":
 			return c.launch()
+		case "ctrl+p":
+			return c.preview()
 		case "ctrl+o":
-			if c.fields[c.focus].key == "inventory" {
+			// Browse for a file to fill any focused text field.
+			if c.fields[c.focus].kind == fText {
+				c.browseKey = c.fields[c.focus].key
 				c.browsing = true
 				return c, c.fp.Init()
 			}
@@ -355,6 +377,12 @@ func (c Console) launch() (tea.Model, tea.Cmd) {
 			c.err = "inventory: " + err.Error()
 			return c, nil
 		}
+		if m := strings.TrimSpace(c.get("match")); m != "" {
+			if err = inv.Match(strings.Split(m, ",")); err != nil {
+				c.err = "match: " + err.Error()
+				return c, nil
+			}
+		}
 		task, err = c.buildTask(tt)
 		if err != nil {
 			c.err = err.Error()
@@ -389,6 +417,46 @@ func (c Console) launch() (tea.Model, tea.Cmd) {
 
 	w := NewWatcher(plan, opts, stage)
 	return w, w.Init()
+}
+
+// resolveInventory builds the target list the way launch() will — file +
+// match, or the ldapsearch query for ldapset — without running anything. Used
+// by the preview screen so you can see exactly who you're about to hit.
+func (c Console) resolveInventory() (*fleet.Inventory, error) {
+	if c.tasktype() == "ldapset" {
+		inv, _, err := c.buildLdap()
+		return inv, err
+	}
+	invPath := strings.TrimSpace(c.get("inventory"))
+	if invPath == "" {
+		return nil, fmt.Errorf("Target list is required")
+	}
+	inv, err := fleet.LoadInventory(invPath)
+	if err != nil {
+		return nil, err
+	}
+	if m := strings.TrimSpace(c.get("match")); m != "" {
+		if err := inv.Match(strings.Split(m, ",")); err != nil {
+			return nil, err
+		}
+	}
+	return inv, nil
+}
+
+// preview resolves the inventory and switches to the preview screen.
+func (c Console) preview() (tea.Model, tea.Cmd) {
+	inv, err := c.resolveInventory()
+	if err != nil {
+		c.err = err.Error()
+		return c, nil
+	}
+	c.previewNames = c.previewNames[:0]
+	for _, t := range inv.Targets {
+		c.previewNames = append(c.previewNames, t.Name)
+	}
+	c.previewing = true
+	c.err = ""
+	return c, nil
 }
 
 func (c Console) buildTask(tt string) (fleet.Task, error) {
@@ -489,11 +557,15 @@ func (c Console) buildLdap() (*fleet.Inventory, fleet.Task, error) {
 
 func (c Console) View() string {
 	if c.browsing {
-		body := titleStyle.Render("Select target list") + "\n\n" +
+		body := titleStyle.Render("Select file — "+c.fieldLabel(c.browseKey)) + "\n\n" +
 			labelStyle.Render(c.fp.CurrentDirectory) + "\n" +
 			c.fp.View() + "\n" +
 			mutedStyle.Render("↑/↓ move · enter open/select · esc cancel")
 		return boxStyle.Render(body) + "\n"
+	}
+
+	if c.previewing {
+		return c.previewView()
 	}
 
 	var b strings.Builder
@@ -510,9 +582,10 @@ func (c Console) View() string {
 		}
 	}
 
-	help := fmt.Sprintf("\n%s %s   %s %s   %s %s   %s %s",
+	help := fmt.Sprintf("\n%s %s   %s %s   %s %s   %s %s   %s %s",
 		keyStyle.Render("tab"), mutedStyle.Render("next"),
 		keyStyle.Render("←/→/space"), mutedStyle.Render("change"),
+		keyStyle.Render("ctrl+p"), mutedStyle.Render("preview targets"),
 		keyStyle.Render("ctrl+g"), mutedStyle.Render("launch"),
 		keyStyle.Render("esc"), mutedStyle.Render("quit"))
 	b.WriteString(help + "\n")
@@ -521,6 +594,76 @@ func (c Console) View() string {
 		b.WriteString("\n" + failStyle.Render("✗ "+c.err) + "\n")
 	}
 	return boxStyle.Render(b.String()) + "\n"
+}
+
+// fieldLabel returns the human label for a field key (for the browse header).
+func (c Console) fieldLabel(key string) string {
+	for _, f := range c.fields {
+		if f.key == key {
+			return f.label
+		}
+	}
+	return key
+}
+
+// previewView shows the resolved target list before launch — "see exactly who
+// you're about to hit." A count headline up top (the number that matters most),
+// the targets, and a capped list with an "+N more" so a 4,000-box fleet doesn't
+// blow out the screen.
+func (c Console) previewView() string {
+	var b strings.Builder
+	n := len(c.previewNames)
+	b.WriteString(titleStyle.Render(fmt.Sprintf("Preview — %d target(s)", n)) + "\n\n")
+
+	if n == 0 {
+		b.WriteString(failStyle.Render("✗ No targets match.") + "\n")
+		b.WriteString(mutedStyle.Render("Check the target list path and the Match globs.") + "\n")
+	} else {
+		limit := maxPreview
+		if limit > n {
+			limit = n
+		}
+		cols := 1
+		if c.width > 70 {
+			cols = 2 // two columns once there's room, so more targets fit at a glance
+		}
+		b.WriteString(previewColumns(c.previewNames[:limit], cols))
+		if n > limit {
+			b.WriteString("  " + mutedStyle.Render(fmt.Sprintf("… and %d more", n-limit)) + "\n")
+		}
+	}
+
+	b.WriteString("\n" + fmt.Sprintf("%s %s   %s %s",
+		keyStyle.Render("enter"), mutedStyle.Render("launch this run"),
+		keyStyle.Render("esc"), mutedStyle.Render("back")))
+	return boxStyle.Render(b.String()) + "\n"
+}
+
+const maxPreview = 40
+
+// previewColumns lays names out in the given number of columns.
+func previewColumns(names []string, cols int) string {
+	if cols < 1 {
+		cols = 1
+	}
+	width := 0
+	for _, n := range names {
+		if len(n) > width {
+			width = len(n)
+		}
+	}
+	if width > 36 {
+		width = 36
+	}
+	var b strings.Builder
+	for i := 0; i < len(names); i += cols {
+		b.WriteString("  ")
+		for j := 0; j < cols && i+j < len(names); j++ {
+			b.WriteString(valueStyle.Render(padRight(names[i+j], width)) + "  ")
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 // serviceSuggestions renders the type-ahead match list under the Service field.
@@ -581,11 +724,22 @@ func (c Console) renderField(f field, focused bool) string {
 		if !focused && f.input.Value() == "" {
 			val = mutedStyle.Render(f.input.Placeholder)
 		}
-		if f.key == "inventory" && focused {
-			val += "  " + keyStyle.Render("(ctrl+o to browse)")
+		if focused && isPathField(f.key) {
+			val += "  " + keyStyle.Render("(ctrl+o browse)")
 		}
 	}
 	return "  " + label + "  " + val
+}
+
+// isPathField reports whether a field's value is a local file path, so the
+// "browse" hint only shows where browsing actually makes sense (not on a glob,
+// a command, or a remote share).
+func isPathField(key string) bool {
+	switch key {
+	case "inventory", "push_src", "inst_pkg", "ssh_key", "health", "tk_program":
+		return true
+	}
+	return false
 }
 
 func atoi(s string) int {
