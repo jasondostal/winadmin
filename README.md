@@ -78,8 +78,13 @@ The fleet is whatever you point it at — a static file *or* a live query:
 ### Safety — what makes it *good*, not just powerful
 
 - **`--what-if`** — render every command without running anything.
+- **`--match 'web*,db0?'`** keeps only matching targets; **`--preview`** prints the resolved
+  target list and exits — see exactly who you're about to hit before you fire.
 - **Staged rollout** — `--canary 1 --wave 25 --health-cmd ./probe.sh`: hit one box, health-check,
   *then* let it ripple in waves; a failed gate aborts and skips the rest.
+- **Lifecycle** — `--loop N` (`0` = forever), `--wait 30s` / `--start-at 02:00` to schedule the
+  start, and `--pre`/`--post '<cmd>'` to bracket the fan-out with a control-host command. The
+  live TUI shows the countdown, pre/post steps, and a loop counter.
 - **`--retries` / `--retry-backoff`**, **`--timeout`**, **`--stop-on-error`**.
 - **Confirm-on-blast** — destructive verbs refuse >1 target without `--yes`.
 - **`--export results.json|.csv`** — the artifact you staple to the change ticket.

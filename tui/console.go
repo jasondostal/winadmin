@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/filepicker"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -185,6 +186,13 @@ func NewConsole() Console {
 			{key: "canary", label: "Canary (N first)", kind: fText, input: ti("0", "0"), show: always},
 			{key: "wave", label: "Wave size", kind: fText, input: ti("0", "0"), show: always},
 			{key: "health", label: "Health check cmd", kind: fText, input: ti("(optional)", ""), show: always},
+
+			// lifecycle
+			{key: "loop", label: "Loop (times)", kind: fText, input: ti("1 (0=forever)", "1"), show: always},
+			{key: "wait", label: "Wait before", kind: fText, input: ti("e.g. 30s", ""), show: always},
+			{key: "start_at", label: "Start at", kind: fText, input: ti("HH:MM (optional)", ""), show: always},
+			{key: "pre", label: "Pre-command", kind: fText, input: ti("control-host cmd", ""), show: always},
+			{key: "post", label: "Post-command", kind: fText, input: ti("control-host cmd", ""), show: always},
 
 			{key: "launch", label: "▶ Launch run", kind: fButton, show: always},
 		},
@@ -415,8 +423,44 @@ func (c Console) launch() (tea.Model, tea.Cmd) {
 		HealthCmd: strings.TrimSpace(c.get("health")),
 	}
 
-	w := NewWatcher(plan, opts, stage)
+	life, err := c.lifecycleOptions()
+	if err != nil {
+		c.err = err.Error()
+		return c, nil
+	}
+
+	w := NewWatcher(plan, opts, stage, life)
 	return w, w.Init()
+}
+
+// lifecycleOptions reads the loop / wait / start-at / pre / post fields into a
+// fleet.LifecycleOptions, validating the duration and clock time up front.
+func (c Console) lifecycleOptions() (fleet.LifecycleOptions, error) {
+	life := fleet.LifecycleOptions{
+		Pre:     strings.TrimSpace(c.get("pre")),
+		Post:    strings.TrimSpace(c.get("post")),
+		StartAt: strings.TrimSpace(c.get("start_at")),
+	}
+	loopN := 1
+	if s := strings.TrimSpace(c.get("loop")); s != "" {
+		loopN = atoi(s)
+	}
+	life.Loops = loopN
+	life.Forever = loopN == 0
+
+	if wait := strings.TrimSpace(c.get("wait")); wait != "" {
+		d, err := time.ParseDuration(wait)
+		if err != nil {
+			return life, fmt.Errorf("wait: %v", err)
+		}
+		life.Delay = d
+	}
+	if life.StartAt != "" {
+		if _, err := life.StartTime(time.Now()); err != nil {
+			return life, err
+		}
+	}
+	return life, nil
 }
 
 // resolveInventory builds the target list the way launch() will — file +

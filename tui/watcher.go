@@ -41,12 +41,18 @@ type resultMsg struct{ r fleet.Result }
 type doneMsg struct{ s fleet.Summary }
 type tickMsg time.Time
 
+// lifecycle event messages
+type waitMsg struct{ until time.Time } // counting down to a scheduled start
+type phaseMsg struct{ note string }    // pre/post phase note ("" clears)
+type loopMsg struct{ num, total int }  // a new loop is starting; reset the board
+
 // Watcher is the live dashboard for a single run. It drives fleet.Run in a
 // goroutine and renders progress as start/result events stream in.
 type Watcher struct {
 	plan  fleet.Plan
 	opts  fleet.Options
 	stage fleet.StageOptions
+	life  fleet.LifecycleOptions
 
 	rows  []row
 	index map[string]int
@@ -71,11 +77,17 @@ type Watcher struct {
 	batchTotal  int
 	width       int
 	height      int
+
+	// lifecycle display state
+	phase     string    // current pre/post phase note ("" = none)
+	waitUntil time.Time // non-zero while counting down to a scheduled start
+	loopNum   int       // current loop (1-based; 0 when not looping)
+	loopTotal int       // total loops (0 = forever)
 }
 
 // NewWatcher builds a watcher for a plan. The caller provides the plan and
 // options; the watcher installs its own OnStart/OnResult hooks.
-func NewWatcher(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions) Watcher {
+func NewWatcher(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, life fleet.LifecycleOptions) Watcher {
 	sp := spinner.New()
 	sp.Spinner = spinner.Dot
 	sp.Style = runStyle
@@ -94,6 +106,7 @@ func NewWatcher(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions) W
 		plan:     plan,
 		opts:     opts,
 		stage:    stage,
+		life:     life,
 		rows:     rows,
 		index:    idx,
 		total:    len(rows),
@@ -119,22 +132,70 @@ func (w Watcher) listen() tea.Cmd {
 	return func() tea.Msg { return <-w.events }
 }
 
-// runEngine launches fleet.Run in the background, funnelling its hooks into the
-// event channel. It returns immediately.
+// runEngine drives the full lifecycle in the background — wait for the start
+// time, then for each loop run the pre-command, the fan-out, and the
+// post-command — funnelling every step into the event channel. Returns
+// immediately; everything streams back as messages.
 func (w Watcher) runEngine() tea.Cmd {
 	return func() tea.Msg {
 		go func() {
-			opts := w.opts
-			opts.OnStart = func(t fleet.Target) { w.events <- startMsg{t.Name} }
-			onResult := func(done, total int, r fleet.Result) { w.events <- resultMsg{r} }
-			var summary fleet.Summary
-			if w.stage.Active() {
-				onBatch := func(num, total, size int, label string) {
-					w.events <- batchMsg{num: num, total: total, size: size, label: label}
+			ctx, life := w.ctx, w.life
+
+			// Delayed / clock-scheduled start.
+			if life.StartAt != "" || life.Delay > 0 {
+				if until, err := life.StartTime(time.Now()); err == nil {
+					w.events <- waitMsg{until}
 				}
-				summary, _, _ = fleet.RunWaves(w.ctx, w.plan, opts, w.stage, onBatch, onResult)
-			} else {
-				summary, _ = fleet.Run(w.ctx, w.plan, opts, onResult)
+				if err := life.WaitForStart(ctx); err != nil {
+					w.events <- doneMsg{}
+					return
+				}
+			}
+
+			looping := life.Forever || life.TotalRuns() > 1
+			loopTotal := 0
+			if !life.Forever {
+				loopTotal = life.TotalRuns()
+			}
+
+			var summary fleet.Summary
+			for n := 1; life.Forever || n <= life.TotalRuns(); n++ {
+				if ctx.Err() != nil {
+					break
+				}
+				if looping {
+					w.events <- loopMsg{num: n, total: loopTotal}
+				}
+
+				if life.Pre != "" {
+					w.events <- phaseMsg{"running pre-command: " + trunc(life.Pre, 44)}
+					if err := fleet.RunControlCommand(ctx, life.Pre); err != nil {
+						w.events <- phaseMsg{"pre-command failed: " + trunc(err.Error(), 44)}
+						break
+					}
+				}
+				w.events <- phaseMsg{""}
+
+				opts := w.opts
+				opts.OnStart = func(t fleet.Target) { w.events <- startMsg{t.Name} }
+				onResult := func(done, total int, r fleet.Result) { w.events <- resultMsg{r} }
+				if w.stage.Active() {
+					onBatch := func(num, total, size int, label string) {
+						w.events <- batchMsg{num: num, total: total, size: size, label: label}
+					}
+					summary, _, _ = fleet.RunWaves(ctx, w.plan, opts, w.stage, onBatch, onResult)
+				} else {
+					summary, _ = fleet.Run(ctx, w.plan, opts, onResult)
+				}
+
+				if life.Post != "" {
+					w.events <- phaseMsg{"running post-command: " + trunc(life.Post, 44)}
+					if err := fleet.RunControlCommand(ctx, life.Post); err != nil {
+						w.events <- phaseMsg{"post-command failed: " + trunc(err.Error(), 44)}
+						break
+					}
+					w.events <- phaseMsg{""}
+				}
 			}
 			w.events <- doneMsg{summary}
 		}()
@@ -176,7 +237,22 @@ func (w Watcher) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		w.batchLabel, w.batchNum, w.batchTotal = msg.label, msg.num, msg.total
 		return w, w.listen()
 
+	case waitMsg:
+		w.waitUntil = msg.until
+		return w, w.listen()
+
+	case phaseMsg:
+		w.phase = msg.note
+		return w, w.listen()
+
+	case loopMsg:
+		w.loopNum, w.loopTotal = msg.num, msg.total
+		w.waitUntil = time.Time{}
+		w.resetForLoop()
+		return w, w.listen()
+
 	case startMsg:
+		w.waitUntil = time.Time{} // work has begun
 		if w.start.IsZero() {
 			w.start = time.Now()
 		}
@@ -196,6 +272,18 @@ func (w Watcher) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return w, nil
 	}
 	return w, nil
+}
+
+// resetForLoop clears the board so a repeat run starts fresh.
+func (w *Watcher) resetForLoop() {
+	for i := range w.rows {
+		w.rows[i].state = stQueued
+		w.rows[i].dur = 0
+		w.rows[i].note = ""
+	}
+	w.done, w.okN, w.failN, w.skipN = 0, 0, 0, 0
+	w.start = time.Time{}
+	w.batchLabel, w.batchNum, w.batchTotal = "", 0, 0
 }
 
 func (w *Watcher) applyResult(r fleet.Result) {
@@ -247,6 +335,13 @@ func (w Watcher) View() string {
 	if w.batchTotal > 0 {
 		header += "   " + runStyle.Render(fmt.Sprintf("▶ %s %d/%d", strings.ToUpper(w.batchLabel), w.batchNum, w.batchTotal))
 	}
+	if w.loopTotal > 1 || (w.life.Forever && w.loopNum > 0) {
+		lt := fmt.Sprintf("%d/%d", w.loopNum, w.loopTotal)
+		if w.life.Forever {
+			lt = fmt.Sprintf("%d/∞", w.loopNum)
+		}
+		header += "   " + runStyle.Render("⟳ loop "+lt)
+	}
 
 	mode := "execute"
 	if w.opts.DryRun {
@@ -281,11 +376,30 @@ func (w Watcher) View() string {
 		footer = okStyle.Render("✓ run complete  ") + footer
 	}
 
-	body := lipgloss.JoinVertical(lipgloss.Left, meta, "", bar, "", rowsView, "", footer)
+	parts := []string{meta}
+	if s := w.lifecycleStatus(); s != "" {
+		parts = append(parts, "", s)
+	}
+	parts = append(parts, "", bar, "", rowsView, "", footer)
+	body := lipgloss.JoinVertical(lipgloss.Left, parts...)
 	b.WriteString(header + "\n")
 	b.WriteString(boxStyle.Render(body))
 	b.WriteString("\n")
 	return b.String()
+}
+
+// lifecycleStatus is the one-line banner for a scheduled-start countdown or a
+// running pre/post command, shown above the progress bar when relevant.
+func (w Watcher) lifecycleStatus() string {
+	if !w.waitUntil.IsZero() && time.Now().Before(w.waitUntil) {
+		rem := time.Until(w.waitUntil).Truncate(time.Second)
+		return runStyle.Render(fmt.Sprintf("⏳ starting at %s   (in %s)",
+			w.waitUntil.Format("15:04:05"), rem))
+	}
+	if w.phase != "" {
+		return runStyle.Render("⚙ " + w.phase)
+	}
+	return ""
 }
 
 func (w Watcher) renderRows() string {

@@ -30,7 +30,7 @@ func TestSnapshotWatcher(t *testing.T) {
 		Task:      fleet.RegSetTask{Hive: "HKLM", Key: `SYSTEM\...\W32Time\Config`, Name: "MaxPollInterval", Data: "10"},
 		Transport: fleet.LocalTransport{},
 	}
-	w := NewWatcher(plan, fleet.Options{Parallelism: 5}, fleet.StageOptions{})
+	w := NewWatcher(plan, fleet.Options{Parallelism: 5}, fleet.StageOptions{}, fleet.LifecycleOptions{})
 	w.width, w.height = 92, 22
 	w.progress.Width = 46
 	w.start = time.Now().Add(-42 * time.Second)

@@ -109,6 +109,7 @@ Targets come from -L <file> or --inventory-cmd "<shell producing one target per 
 Filter/preview: --match 'web*,db0?' keeps matching targets; --preview prints the
 resolved target list and exits without running.
 Staged rollout (most verbs): --canary N --wave M --health-cmd '<check>' --pause 10s.
+Lifecycle: --loop N (0=forever), --wait 30s / --start-at HH:MM, --pre/--post '<cmd>'.
 Add --tui to a verb to watch that run in the live dashboard.
 Run "fleet <subcommand> -h" for subcommand flags.
 `)
@@ -144,6 +145,11 @@ type commonFlags struct {
 	sshPwEnv      string
 	export        string
 	yes           bool
+	pre           string
+	post          string
+	loop          int
+	wait          time.Duration
+	startAt       string
 	winrmUser     string
 	winrmPwEnv    string
 	winrmPort     int
@@ -181,6 +187,11 @@ func registerCommon(fs *flag.FlagSet) *commonFlags {
 	fs.StringVar(&c.sshPwEnv, "ssh-pw-env", "", "env var holding the ssh password (transport=ssh)")
 	fs.StringVar(&c.export, "export", "", "write full per-target results to a .json or .csv file")
 	fs.BoolVar(&c.yes, "yes", false, "confirm a destructive action across many targets")
+	fs.StringVar(&c.pre, "pre", "", "control-host command to run once before the fan-out")
+	fs.StringVar(&c.post, "post", "", "control-host command to run once after the fan-out")
+	fs.IntVar(&c.loop, "loop", 1, "repeat the whole run this many times (0 = forever)")
+	fs.DurationVar(&c.wait, "wait", 0, "wait this long before starting, e.g. 30s")
+	fs.StringVar(&c.startAt, "start-at", "", "hold until a wall-clock time, HH:MM or HH:MM:SS")
 	fs.StringVar(&c.winrmUser, "winrm-user", "", "winrm username (transport=winrm)")
 	fs.StringVar(&c.winrmPwEnv, "winrm-pw-env", "", "env var holding the winrm password")
 	fs.IntVar(&c.winrmPort, "winrm-port", 0, "winrm port (default 5985 http / 5986 https)")
@@ -296,6 +307,17 @@ func (c *commonFlags) options() fleet.Options {
 	}
 }
 
+func (c *commonFlags) lifecycleOptions() fleet.LifecycleOptions {
+	return fleet.LifecycleOptions{
+		Pre:     c.pre,
+		Post:    c.post,
+		Loops:   c.loop,
+		Forever: c.loop == 0,
+		Delay:   c.wait,
+		StartAt: c.startAt,
+	}
+}
+
 func runCmd(args []string) {
 	fs := flag.NewFlagSet("run", flag.ExitOnError)
 	common := registerCommon(fs)
@@ -372,7 +394,7 @@ func execute(common *commonFlags, task fleet.Task) {
 		previewTargets(plan)
 		return
 	}
-	runPlan(plan, common.options(), common.stageOptions(), common.tui, common.showOutput, common.export)
+	runPlan(plan, common.options(), common.stageOptions(), common.lifecycleOptions(), common.tui, common.showOutput, common.export)
 }
 
 // previewTargets prints the resolved target list (post inventory/exclude/match)
@@ -385,24 +407,78 @@ func previewTargets(plan fleet.Plan) {
 	}
 }
 
-// runPlan executes a built plan and renders progress + summary. Shared by every
-// subcommand so they all behave identically (TUI, dry-run, -v, staging, exit codes).
-func runPlan(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, useTUI, showOutput bool, exportPath string) {
-	total := plan.Inventory.Len()
-	if total == 0 {
-		fmt.Fprintln(os.Stderr, "no targets after inventory/exclude — nothing to do")
+// runPlan executes a built plan: the lifecycle wait/loop/pre-post wrapper around
+// the live dashboard or stdout progress. Shared by every subcommand so they all
+// behave identically (TUI, dry-run, -v, staging, lifecycle, exit codes).
+func runPlan(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, life fleet.LifecycleOptions, useTUI, showOutput bool, exportPath string) {
+	if plan.Inventory.Len() == 0 {
+		fmt.Fprintln(os.Stderr, "no targets after inventory/exclude/match — nothing to do")
 		os.Exit(1)
 	}
 
-	// Full-screen live dashboard (can include staged rollout).
+	// The full-screen dashboard owns the whole lifecycle itself (wait/pre/post/loop).
 	if useTUI {
-		if err := tui.RunWatcher(plan, opts, stage); err != nil {
+		if err := tui.RunWatcher(plan, opts, stage, life); err != nil {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
 		return
 	}
 
+	ctx := context.Background()
+
+	// Delayed / clock-scheduled start.
+	if life.StartAt != "" || life.Delay > 0 {
+		when, err := life.StartTime(time.Now())
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(2)
+		}
+		fmt.Printf("waiting until %s (in %s) ...\n",
+			when.Format("2006-01-02 15:04:05"), time.Until(when).Truncate(time.Second))
+		if err := life.WaitForStart(ctx); err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+	}
+
+	anyFailed := false
+	looping := life.Forever || life.TotalRuns() > 1
+	for n := 1; life.Forever || n <= life.TotalRuns(); n++ {
+		if looping {
+			label := fmt.Sprintf("%d/%d", n, life.TotalRuns())
+			if life.Forever {
+				label = fmt.Sprintf("%d (forever — ctrl-c to stop)", n)
+			}
+			fmt.Printf("\n======== loop %s ========\n", label)
+		}
+		if life.Pre != "" {
+			fmt.Printf(":: pre-command: %s\n", life.Pre)
+			if err := fleet.RunControlCommand(ctx, life.Pre); err != nil {
+				fmt.Fprintln(os.Stderr, "pre-command failed:", err)
+				os.Exit(1)
+			}
+		}
+		if runOnce(ctx, plan, opts, stage, showOutput, exportPath) {
+			anyFailed = true
+		}
+		if life.Post != "" {
+			fmt.Printf(":: post-command: %s\n", life.Post)
+			if err := fleet.RunControlCommand(ctx, life.Post); err != nil {
+				fmt.Fprintln(os.Stderr, "post-command failed:", err)
+				os.Exit(1)
+			}
+		}
+	}
+
+	if anyFailed {
+		os.Exit(1)
+	}
+}
+
+// runOnce performs one fan-out (staged or plain), prints per-target progress and
+// the run summary, and reports whether any target failed.
+func runOnce(ctx context.Context, plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, showOutput bool, exportPath string) (failed bool) {
 	mode := "EXECUTE"
 	if opts.DryRun {
 		mode = "WHAT-IF (dry run)"
@@ -413,7 +489,7 @@ func runPlan(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, useT
 	}
 	fmt.Printf("fleet :: %s\n", plan.Task.Describe())
 	fmt.Printf("targets=%d  parallel=%d  transport=%s  mode=%s%s\n\n",
-		total, opts.Parallelism, plan.Transport.Describe(), mode, stageNote)
+		plan.Inventory.Len(), opts.Parallelism, plan.Transport.Describe(), mode, stageNote)
 
 	// Live per-target progress to stdout; structured audit goes to slog (stderr).
 	onResult := func(done, total int, r fleet.Result) {
@@ -447,13 +523,13 @@ func runPlan(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, useT
 		onBatch := func(num, totalB, size int, label string) {
 			fmt.Printf("\n== %s: batch %d/%d (%d target(s)) ==\n", strings.ToUpper(label), num, totalB, size)
 		}
-		s, res, err := fleet.RunWaves(context.Background(), plan, opts, stage, onBatch, onResult)
+		s, res, err := fleet.RunWaves(ctx, plan, opts, stage, onBatch, onResult)
 		summary, results = s, res
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "\n!! %s\n", err)
 		}
 	} else {
-		summary, results = fleet.Run(context.Background(), plan, opts, onResult)
+		summary, results = fleet.Run(ctx, plan, opts, onResult)
 	}
 
 	if exportPath != "" {
@@ -470,9 +546,7 @@ func runPlan(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, useT
 	fmt.Printf("started=%s\nfinished=%s\nelapsed=%s\n",
 		summary.Started.Format(time.RFC3339), summary.Finished.Format(time.RFC3339), summary.Elapsed())
 
-	if summary.Failed > 0 {
-		os.Exit(1)
-	}
+	return summary.Failed > 0
 }
 
 func svcCmd(args []string) {
@@ -692,6 +766,7 @@ func ldapsetCmd(args []string) {
 		dryRun:       *dryRun,
 		transport:    "local",
 		showOutput:   *showOutput,
+		loop:         1, // once; lifecycleOptions() treats loop==0 as "forever"
 	}
 	plan, err := common.buildPlan(fleet.CommandTask{Template: taskCmd})
 	if err != nil {
@@ -699,7 +774,7 @@ func ldapsetCmd(args []string) {
 		os.Exit(1)
 	}
 	fmt.Printf("ldapset :: %s %s=%s under %s\n", *op, *attr, *value, *base)
-	runPlan(plan, common.options(), common.stageOptions(), false, *showOutput, common.export)
+	runPlan(plan, common.options(), common.stageOptions(), common.lifecycleOptions(), false, *showOutput, common.export)
 }
 
 // agentCmd is the pull side: each box runs this to fetch a job from a shared

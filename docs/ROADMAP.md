@@ -49,6 +49,11 @@ Legend: ✅ done · 🚧 in progress · ⬜ planned
 - ✅ **Result export** — `--export results.json|results.csv` writes the full per-target set.
 - ✅ **Confirm-on-blast** — destructive verbs (`deldir`, `reboot`, `proc`) refuse >1 target
   without `--yes` (or `--what-if`).
+- ✅ **Target filter / preview** — `--match 'web*,db0?'` keeps matching targets; `--preview`
+  prints the resolved list and exits without running.
+- ✅ **Lifecycle** — `--loop N` (`0` = forever), `--wait`/`--start-at` to schedule the start,
+  and `--pre`/`--post` to bracket the fan-out with a control-host command. Full run-model
+  parity with the old overnight fleet-runners, with the TUI showing countdown/loop/pre-post.
 
 ## Transports / connectivity — reach more fleets
 

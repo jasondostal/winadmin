@@ -22,11 +22,11 @@ func RunConsole() error {
 }
 
 // RunWatcher launches the live dashboard (TUI #1) for an already-built plan.
-func RunWatcher(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions) error {
+func RunWatcher(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, life fleet.LifecycleOptions) error {
 	if opts.Logger == nil {
 		opts.Logger = quietSlog()
 	}
-	w := NewWatcher(plan, opts, stage)
+	w := NewWatcher(plan, opts, stage, life)
 	_, err := tea.NewProgram(w, tea.WithAltScreen()).Run()
 	return err
 }
