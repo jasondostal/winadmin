@@ -342,7 +342,5 @@ func userAt(user, host string) string {
 	return user + "@" + host
 }
 
-// shquote single-quotes a string for /bin/sh.
-func shquote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
-}
+// shquote single-quotes a string for /bin/sh. See ShellQuote.
+func shquote(s string) string { return ShellQuote(s) }

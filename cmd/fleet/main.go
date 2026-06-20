@@ -19,8 +19,6 @@ package main
 
 import (
 	"context"
-	"encoding/csv"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"math/rand"
@@ -28,6 +26,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jasondostal/winadmin/dialog"
 	"github.com/jasondostal/winadmin/fleet"
 	"github.com/jasondostal/winadmin/secret"
 	"github.com/jasondostal/winadmin/tui"
@@ -75,6 +74,8 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
+	case "egg": // undocumented: the favorite 3 a.m. dialog
+		dialog.Classic()
 	case "-h", "--help", "help":
 		usage()
 	default:
@@ -196,15 +197,7 @@ func (c *commonFlags) buildPlan(task fleet.Task) (fleet.Plan, error) {
 	var err error
 	switch {
 	case c.inventorySpec != "":
-		cmd, file, e := expandInventorySpec(c.inventorySpec)
-		if e != nil {
-			return fleet.Plan{}, e
-		}
-		if cmd != "" {
-			inv, err = fleet.InventoryFromCommand(context.Background(), cmd)
-		} else {
-			inv, err = fleet.LoadInventory(file)
-		}
+		inv, err = fleet.ResolveInventory(context.Background(), c.inventorySpec)
 	case c.inventoryCmd != "":
 		inv, err = fleet.InventoryFromCommand(context.Background(), c.inventoryCmd)
 	case c.list != "":
@@ -412,11 +405,11 @@ func runPlan(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, useT
 		}
 		fmt.Printf("[%d/%d] %-20s %s\n", done, total, r.Target, status)
 		if showOutput {
-			for _, line := range splitNonEmptyLines(r.Stdout) {
+			for _, line := range fleet.NonEmptyLines(r.Stdout) {
 				fmt.Printf("        | %s\n", line)
 			}
 			if r.ExitCode != 0 || r.Err != nil {
-				for _, line := range splitNonEmptyLines(r.Stderr) {
+				for _, line := range fleet.NonEmptyLines(r.Stderr) {
 					fmt.Printf("        ! %s\n", line)
 				}
 			}
@@ -439,7 +432,7 @@ func runPlan(plan fleet.Plan, opts fleet.Options, stage fleet.StageOptions, useT
 	}
 
 	if exportPath != "" {
-		if err := exportResults(results, exportPath); err != nil {
+		if err := fleet.ExportResults(results, exportPath); err != nil {
 			fmt.Fprintln(os.Stderr, "export error:", err)
 		} else {
 			fmt.Printf("results written to %s\n", exportPath)
@@ -605,52 +598,7 @@ func gatherCmd(args []string) {
 		return
 	}
 	_, results := fleet.Run(context.Background(), plan, common.options(), nil)
-	formatGather(results, *format)
-}
-
-func formatGather(results []fleet.Result, format string) {
-	type row struct {
-		Target string `json:"target"`
-		Exit   int    `json:"exit"`
-		Output string `json:"output"`
-		Err    string `json:"error,omitempty"`
-	}
-	rows := make([]row, 0, len(results))
-	for _, r := range results {
-		out := strings.Join(splitNonEmptyLines(r.Stdout), " ")
-		errStr := ""
-		if r.Err != nil {
-			errStr = r.Err.Error()
-		}
-		rows = append(rows, row{Target: r.Target, Exit: r.ExitCode, Output: out, Err: errStr})
-	}
-
-	switch format {
-	case "json":
-		b, _ := json.MarshalIndent(rows, "", "  ")
-		fmt.Println(string(b))
-	case "csv":
-		w := csv.NewWriter(os.Stdout)
-		_ = w.Write([]string{"target", "exit", "output", "error"})
-		for _, r := range rows {
-			_ = w.Write([]string{r.Target, fmt.Sprintf("%d", r.Exit), r.Output, r.Err})
-		}
-		w.Flush()
-	default: // table
-		width := 0
-		for _, r := range rows {
-			if len(r.Target) > width {
-				width = len(r.Target)
-			}
-		}
-		for _, r := range rows {
-			out := r.Output
-			if r.Err != "" {
-				out = "ERROR: " + r.Err
-			}
-			fmt.Printf("%-*s  %s\n", width, r.Target, out)
-		}
-	}
+	fmt.Print(fleet.FormatGather(results, *format))
 }
 
 // ldapsetCmd sets one attribute on every entry returned by an LDAP/AD search —
@@ -698,11 +646,11 @@ func ldapsetCmd(args []string) {
 	_, _ = pwFile.WriteString(pw)
 	_ = pwFile.Close()
 
-	conn := fmt.Sprintf(`-H %s -D %s -y %s`, shellQuote(*url), shellQuote(*bindDN), shellQuote(pwFile.Name()))
+	conn := fmt.Sprintf(`-H %s -D %s -y %s`, fleet.ShellQuote(*url), fleet.ShellQuote(*bindDN), fleet.ShellQuote(pwFile.Name()))
 
 	// Dynamic inventory: every DN under the base matching the filter.
 	invCmd := fmt.Sprintf(`ldapsearch -x -LLL -o ldif-wrap=no %s -b %s %s dn | sed -n 's/^dn: //p'`,
-		conn, shellQuote(*base), shellQuote(*filter))
+		conn, fleet.ShellQuote(*base), fleet.ShellQuote(*filter))
 
 	// Per-entry change: an LDIF modify piped into ldapmodify. {{.Name}} is the DN.
 	ldif := fmt.Sprintf("dn: {{.Name}}\\nchangetype: modify\\n%s: %s\\n%s: %s\\n",
@@ -723,11 +671,6 @@ func ldapsetCmd(args []string) {
 	}
 	fmt.Printf("ldapset :: %s %s=%s under %s\n", *op, *attr, *value, *base)
 	runPlan(plan, common.options(), common.stageOptions(), false, *showOutput, common.export)
-}
-
-// shellQuote single-quotes a string for safe inclusion in a /bin/sh command.
-func shellQuote(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // agentCmd is the pull side: each box runs this to fetch a job from a shared
@@ -763,7 +706,7 @@ func agentCmd(args []string) {
 				status = fmt.Sprintf("exit %d", res.Outcome.ExitCode)
 			}
 			fmt.Printf("agent: ran job version %s -> %s\n", res.Version, status)
-			for _, l := range splitNonEmptyLines(res.Outcome.Stdout) {
+			for _, l := range fleet.NonEmptyLines(res.Outcome.Stdout) {
 				fmt.Printf("  | %s\n", l)
 			}
 		}
@@ -784,99 +727,3 @@ func agentCmd(args []string) {
 func sleepCtx(d time.Duration) bool { time.Sleep(d); return true }
 
 func filepathJoinTemp(name string) string { return os.TempDir() + string(os.PathSeparator) + name }
-
-// expandInventorySpec turns an --inventory plugin spec into either a shell
-// command (dynamic) or a file path. The ad-* plugins read LDAP_URL / LDAP_BIND_DN
-// / LDAP_PW from the environment; $LDAP_PW is expanded by the shell at run time so
-// the password is not baked into the rendered command.
-func expandInventorySpec(spec string) (cmd, file string, err error) {
-	switch {
-	case strings.HasPrefix(spec, "file:"):
-		return "", strings.TrimPrefix(spec, "file:"), nil
-	case strings.HasPrefix(spec, "cmd:"):
-		return strings.TrimPrefix(spec, "cmd:"), "", nil
-	case strings.HasPrefix(spec, "aws:"):
-		filter := strings.TrimPrefix(spec, "aws:")
-		return fmt.Sprintf(`aws ec2 describe-instances --filters %s `+
-			`--query 'Reservations[].Instances[].PrivateIpAddress' --output text | tr '\t' '\n'`,
-			shellQuote(filter)), "", nil
-	case strings.HasPrefix(spec, "ad-ou:"):
-		dn := strings.TrimPrefix(spec, "ad-ou:")
-		return ldapInventoryCmd(dn, "(&(objectCategory=person)(objectClass=user))"), "", nil
-	case strings.HasPrefix(spec, "ad-group:"):
-		group := strings.TrimPrefix(spec, "ad-group:")
-		base := os.Getenv("LDAP_BASE")
-		return ldapInventoryCmd(base, fmt.Sprintf("(memberOf=%s)", group)), "", nil
-	default:
-		return "", "", fmt.Errorf("unknown inventory spec %q (use file:/cmd:/aws:/ad-ou:/ad-group:)", spec)
-	}
-}
-
-func ldapInventoryCmd(base, filter string) string {
-	url := os.Getenv("LDAP_URL")
-	bind := os.Getenv("LDAP_BIND_DN")
-	return fmt.Sprintf(`ldapsearch -x -LLL -o ldif-wrap=no -H %s -D %s -w "$LDAP_PW" -b %s %s dn | sed -n 's/^dn: //p'`,
-		shellQuote(url), shellQuote(bind), shellQuote(base), shellQuote(filter))
-}
-
-// exportResults writes the full per-target result set to a .json or .csv file —
-// the artifact you staple to the change ticket.
-func exportResults(results []fleet.Result, path string) error {
-	type row struct {
-		Target   string `json:"target"`
-		OK       bool   `json:"ok"`
-		Exit     int    `json:"exit"`
-		Skipped  bool   `json:"skipped"`
-		Command  string `json:"command"`
-		Stdout   string `json:"stdout,omitempty"`
-		Stderr   string `json:"stderr,omitempty"`
-		Err      string `json:"error,omitempty"`
-		Duration string `json:"duration"`
-	}
-	rows := make([]row, 0, len(results))
-	for _, r := range results {
-		e := ""
-		if r.Err != nil {
-			e = r.Err.Error()
-		}
-		rows = append(rows, row{
-			Target: r.Target, OK: r.OK(), Exit: r.ExitCode, Skipped: r.Skipped,
-			Command: r.Command, Stdout: strings.TrimSpace(r.Stdout), Stderr: strings.TrimSpace(r.Stderr),
-			Err: e, Duration: r.Duration().String(),
-		})
-	}
-	if strings.HasSuffix(strings.ToLower(path), ".csv") {
-		f, err := os.Create(path)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-		w := csv.NewWriter(f)
-		_ = w.Write([]string{"target", "ok", "exit", "skipped", "command", "stdout", "stderr", "error", "duration"})
-		for _, r := range rows {
-			_ = w.Write([]string{r.Target, fmt.Sprintf("%t", r.OK), fmt.Sprintf("%d", r.Exit),
-				fmt.Sprintf("%t", r.Skipped), r.Command, oneLine(r.Stdout), oneLine(r.Stderr), r.Err, r.Duration})
-		}
-		w.Flush()
-		return w.Error()
-	}
-	b, err := json.MarshalIndent(rows, "", "  ")
-	if err != nil {
-		return err
-	}
-	return os.WriteFile(path, b, 0o644)
-}
-
-func oneLine(s string) string {
-	return strings.Join(splitNonEmptyLines(s), " ")
-}
-
-func splitNonEmptyLines(s string) []string {
-	var out []string
-	for _, line := range strings.Split(s, "\n") {
-		if strings.TrimSpace(line) != "" {
-			out = append(out, strings.TrimRight(line, "\r"))
-		}
-	}
-	return out
-}

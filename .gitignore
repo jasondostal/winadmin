@@ -12,5 +12,7 @@
 .DS_Store
 Thumbs.db
 
-# local build artifact
+# local build artifact: the `fleet` binary collides with the fleet/ package dir,
+# so ignore the file but keep the directory tracked.
 /fleet
+!/fleet/
