@@ -18,7 +18,7 @@ import (
 // Machine is one provisioned box.
 type Machine struct {
 	Name          string    `json:"name"`
-	OS            string    `json:"os,omitempty"`         // "windows" | "linux"
+	OS            string    `json:"os,omitempty"` // "windows" | "linux"
 	AgentVersion  string    `json:"agent_version,omitempty"`
 	ProvisionedAt time.Time `json:"provisioned_at,omitempty"`
 	LastStatus    string    `json:"last_status,omitempty"` // free-form, set by the status board
