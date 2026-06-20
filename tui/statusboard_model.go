@@ -37,21 +37,27 @@ func NewStatusBoard(reg *fleet.Registry, registryPath string, tr fleet.Transport
 	}
 }
 
-type sbPollMsg struct{ states map[string]string }
+type sbPollMsg struct {
+	states  map[string]string
+	latency map[string]time.Duration
+}
 type sbTickMsg time.Time
 
 func (b StatusBoard) Init() tea.Cmd { return b.poll() }
 
-// poll runs one status fan-out across the fleet in the background.
+// poll runs one status fan-out across the fleet in the background, capturing each
+// box's state and response latency.
 func (b StatusBoard) poll() tea.Cmd {
 	plan, opts := b.plan, b.opts
 	return func() tea.Msg {
 		_, results := fleet.Run(context.Background(), plan, opts, nil)
 		states := make(map[string]string, len(results))
+		latency := make(map[string]time.Duration, len(results))
 		for _, r := range results {
 			states[r.Target] = fleet.ServiceState(r)
+			latency[r.Target] = r.Duration()
 		}
-		return sbPollMsg{states}
+		return sbPollMsg{states: states, latency: latency}
 	}
 }
 
@@ -90,6 +96,7 @@ func (b StatusBoard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if st, ok := msg.states[b.machines[i].Name]; ok {
 				b.machines[i].LastStatus = st
 				b.machines[i].LastSeen = now
+				b.machines[i].Latency = msg.latency[b.machines[i].Name]
 			}
 		}
 		b.lastPoll = now

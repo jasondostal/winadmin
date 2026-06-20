@@ -22,6 +22,13 @@ func padRight(s string, n int) string {
 	return s + spaces(n-len(s))
 }
 
+func padLeft(s string, n int) string {
+	if len(s) >= n {
+		return trunc(s, n)
+	}
+	return spaces(n-len(s)) + s
+}
+
 func spaces(n int) string {
 	b := make([]byte, n)
 	for i := range b {

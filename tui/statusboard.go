@@ -63,23 +63,16 @@ func stateIcon(s string) string {
 
 func isRunning(s string) bool { return strings.EqualFold(s, "RUNNING") }
 
-func relTime(t, now time.Time) string {
-	if t.IsZero() {
-		return "—"
-	}
-	d := now.Sub(t)
-	if d < 0 {
-		d = 0
-	}
+// fmtLatency renders a poll response time — the per-machine health signal that
+// replaces a (useless, all-synchronized) "last seen" clock.
+func fmtLatency(d time.Duration) string {
 	switch {
+	case d <= 0:
+		return "—"
 	case d < time.Second:
-		return fmt.Sprintf("%dms ago", d.Milliseconds())
-	case d < time.Minute:
-		return fmt.Sprintf("%ds ago", int(d.Seconds()))
-	case d < time.Hour:
-		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+		return fmt.Sprintf("%dms", d.Milliseconds())
 	default:
-		return fmt.Sprintf("%dh ago", int(d.Hours()))
+		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 }
 
@@ -138,7 +131,7 @@ func RenderStatusBoard(machines []fleet.Machine, now time.Time) string {
 			valueStyle.Render(padRight(displayName(m), nameW)),
 			mutedStyle.Render(padRight(m.OS, osW)),
 			stateStyle(m.LastStatus).Render(padRight(m.LastStatus, 12)),
-			mutedStyle.Render(relTime(m.LastSeen, now))))
+			mutedStyle.Render(padLeft(fmtLatency(m.Latency), 6))))
 	}
 
 	// per-OS roll-up, stacked so the board width is driven by the rows.

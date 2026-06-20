@@ -24,6 +24,10 @@ type Machine struct {
 	ProvisionedAt time.Time `json:"provisioned_at,omitempty"`
 	LastStatus    string    `json:"last_status,omitempty"` // free-form, set by the status board
 	LastSeen      time.Time `json:"last_seen,omitempty"`
+
+	// Latency is the most recent poll's response time. Transient (not persisted):
+	// it's a live signal for the status board, meaningless once written to disk.
+	Latency time.Duration `json:"-"`
 }
 
 // Registry is a set of provisioned machines persisted as JSON.
