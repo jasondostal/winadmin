@@ -52,6 +52,8 @@ a query define the fleet (see [Inventory](#inventory)).
 | `ldapset` | set an attribute on every user in an AD/LDAP OU | `ldapset --base 'OU=Tellers,…' --attr department --value Retail` |
 | `gather` | run a query per box, tabulate it | `gather -c 'wmic os get version' --format csv` |
 | `agent` | the pull side: each box fetches + runs its own job | `agent --source \\share\job.txt --interval 60s` |
+| `provision` | install the agent as a service across a fleet + register them | `provision -L hosts.txt --transport winrm --agent-url … --job-source …` |
+| `status` | poll the registered fleet's agent service — a live dashboard | `status --tui --registry fleet-registry.json` |
 
 ### Transports (`--transport`)
 
@@ -120,6 +122,33 @@ counts. And `gather --tui` turns the fleet into a **filterable report**:
 
 ---
 
+## Provisioning & the live status board
+
+Point `fleet` at a list of machines and it'll **provision** them — push the agent, install it as a
+real Windows service (`sc create`, SCM-aware), and **register** each box in a file-based registry
+(a JSON file; put it on a network share and the whole team's `fleet status` sees the same fleet —
+no server, no database):
+
+```sh
+fleet provision -L hosts.txt --transport winrm --winrm-user Administrator \
+  --agent-url https://dist/fleet.exe --job-source https://dist/job.txt --registry fleet.json
+```
+
+Then **`fleet status --tui`** is the live heartbeat board: it polls the agent service on every
+registered box on a cycle, with each machine's own hostname + OS, per-box response **latency**
+(a laggy box stands out), and a per-OS roll-up. Problems sort to the top, btop-style.
+
+![fleet status board — healthy](docs/screenshots/status-board.png)
+
+…and the view you never want to see — connectivity lost, the whole fleet gone red:
+
+![fleet status board — fleet down](docs/screenshots/status-board-down.png)
+
+<sup>Both shots are real: an 18-node mixed Windows fleet (Server 2016/2019/2022) provisioned and
+polled over WinRM from a Linux control host — see the [live-fire writeup](docs/live-fire-provisioning-2026-06-20.md).</sup>
+
+---
+
 ## The library
 
 `fleet` is a thin CLI over reusable packages — build your own admin tools on these:
@@ -149,6 +178,9 @@ tests — that's how the SSH-auth, `--ssh-port`, `-v`, and dynamic-inventory gap
   canary→waves *and* a health-gate abort.
 - **[Windows transports](docs/live-fire-windows-2026-06-19.md)** — Server 2022 EC2: WinRM
   doing real registry read/write + service restart, WMI, PsExec — all driven from Linux.
+- **[Provisioning + status board](docs/live-fire-provisioning-2026-06-20.md)** — an 18-node
+  mixed Windows fleet (Server 2016/2019/2022) provisioned to a running service and polled live
+  over WinRM; two real bugs the live-fire caught and a clean teardown to $0.
 
 Full backlog status: **[ROADMAP.md](docs/ROADMAP.md)**.
 
