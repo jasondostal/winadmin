@@ -139,7 +139,11 @@ into real columns, then lets you **sort by any column** (numeric-aware), **group
 expandable tree** by any column (including an `OS` column joined from the registry), and
 `/`-filter across all cells:
 
-![fleet gather table](docs/screenshots/gather.png)
+![fleet gather — grouped spreadsheet](docs/screenshots/fleetgatherlinux.png)
+
+<sup>A real 23-box, multi-distro fleet (Ubuntu · Debian · Rocky · Alma · Fedora · openSUSE · Oracle ·
+Amazon Linux) gathered over SSH and grouped by OS — uptime, last reboot, and free disk per box,
+live in the terminal.</sup>
 
 ---
 
