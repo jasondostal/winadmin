@@ -950,11 +950,12 @@ func provisionScript(dir, url, jobSrc, interval, svc string) string {
 	binPath := fmt.Sprintf(`%s\fleet.exe agent --source %s --interval %s --state %s\agent.state`, dir, jobSrc, interval, dir)
 	body := strings.Join([]string{
 		fmt.Sprintf(`New-Item -ItemType Directory -Force -Path '%s' | Out-Null`, dir),
-		fmt.Sprintf(`Invoke-WebRequest -UseBasicParsing -Uri '%s' -OutFile '%s\fleet.exe'`, url, dir),
+		// Stop + delete the old service FIRST so it releases the lock on fleet.exe
+		// (a re-provision overwriting the running binary otherwise fails).
 		fmt.Sprintf(`& sc.exe stop %s | Out-Null`, svc),
 		fmt.Sprintf(`& sc.exe delete %s | Out-Null`, svc),
-		// Wait for the old service to fully delete before recreating (idempotent re-runs).
-		fmt.Sprintf(`$deadline=(Get-Date).AddSeconds(15); while((Get-Date) -lt $deadline){ & sc.exe query %s *>$null; if($LASTEXITCODE -ne 0){break}; Start-Sleep -Milliseconds 400 }`, svc),
+		fmt.Sprintf(`$deadline=(Get-Date).AddSeconds(20); while((Get-Date) -lt $deadline){ & sc.exe query %s *>$null; if($LASTEXITCODE -ne 0){break}; Start-Sleep -Milliseconds 400 }`, svc),
+		fmt.Sprintf(`Invoke-WebRequest -UseBasicParsing -Uri '%s' -OutFile '%s\fleet.exe'`, url, dir),
 		fmt.Sprintf(`& sc.exe create %s binPath= '%s' start= auto | Out-Null`, svc, binPath),
 		fmt.Sprintf(`& sc.exe start %s | Out-Null`, svc),
 		`Start-Sleep -Seconds 1`,
